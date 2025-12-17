@@ -43,5 +43,8 @@
     "workbox-precaching": "^7.4.0",
     "workbox-routing": "^7.4.0",
     "workbox-window": "^7.4.0"
+  },
+  "dependencies": {
+    "@sentry/react": "^10.31.0"
   }
 }
