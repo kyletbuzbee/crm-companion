@@ -1,0 +1,368 @@
+import React, { memo, useMemo, useCallback, useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { A11yProps } from './types-enhanced';
+
+// ============================================================================
+// REACT.MEMO OPTIMIZED COMPONENTS
+// ============================================================================
+
+// Memoized prospect card with shallow comparison
+interface ProspectCardProps {
+  prospect: any; // Prospect type
+  onEmailClick: (cid: string) => void;
+  onLogVisit: (cid: string) => void;
+  className?: string;
+}
+
+export const ProspectCard = memo<ProspectCardProps>(({ prospect, onEmailClick, onLogVisit, className = '' }) => {
+  const getNextActionRecommendation = useCallback((p: any) => {
+    const daysSinceTouch = p.lastOutreachDate
+      ? Math.ceil((Date.now() - new Date(p.lastOutreachDate).getTime()) / (1000 * 60 * 60 * 24))
+      : 999;
+    const isOverdue = p.nextVisitDate && new Date(p.nextVisitDate) < new Date();
+
+    if (p.contactStatus === 'Hot' && (isOverdue || daysSinceTouch > 5)) {
+      return {
+        action: 'Call Immediately',
+        urgency: 'critical' as const,
+        icon: '🔥',
+        reason: `Hot lead risk! ${daysSinceTouch} days silence.`,
+        dueDate: 'Today'
+      };
+    }
+    if (p.lastOutcome === 'Send Info' && daysSinceTouch > 7) {
+      return {
+        action: 'Send Pricing',
+        urgency: 'high' as const,
+        icon: '📧',
+        reason: 'Info requested. Send quote now.',
+        dueDate: 'This Week'
+      };
+    }
+    if (p.contactStatus === 'Warm' && daysSinceTouch > 14) {
+      return {
+        action: 'Check-In Call',
+        urgency: 'medium' as const,
+        icon: '📞',
+        reason: 'Maintain relationship warmth.',
+        dueDate: 'Next 7 Days'
+      };
+    }
+    return {
+      action: 'Site Visit',
+      urgency: 'medium' as const,
+      icon: '🚗',
+      reason: 'Face time builds trust.',
+      dueDate: 'This Month'
+    };
+  }, []);
+
+  const recommendation = useMemo(() => getNextActionRecommendation(prospect), [prospect, getNextActionRecommendation]);
+
+  return (
+    <div className={`bg-white p-5 rounded-lg shadow-sm border border-gray-200 hover:shadow-lg transition-all ${className}`}>
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex-1">
+          <h3 className="font-bold text-xl text-gray-800">{prospect.companyName}</h3>
+          <div className="text-sm text-gray-500 mt-1">
+            {prospect.address} • {prospect.industry}
+          </div>
+        </div>
+        <div className="text-right">
+          <div
+            className={`text-xs font-bold px-3 py-1.5 rounded-full mb-2 inline-block ${
+              prospect.winProbability > 70
+                ? 'bg-green-100 text-green-800'
+                : prospect.winProbability > 30
+                ? 'bg-yellow-100 text-yellow-800'
+                : 'bg-red-100 text-red-800'
+            }`}
+          >
+            {prospect.winProbability}% Win
+          </div>
+          <div className="text-xs text-gray-500">Priority: {prospect.priority}</div>
+        </div>
+      </div>
+
+      <div
+        className={`mt-3 p-4 rounded-lg border-2 flex items-center gap-3 ${
+          recommendation.urgency === 'critical'
+            ? 'bg-red-50 border-red-300'
+            : recommendation.urgency === 'high'
+            ? 'bg-orange-50 border-orange-300'
+            : 'bg-gray-50 border-gray-200'
+        }`}
+      >
+        <div className="text-3xl">{recommendation.icon}</div>
+        <div className="flex-1">
+          <div className="text-xs font-bold uppercase tracking-wide text-gray-500">
+            AI Recommendation
+          </div>
+          <div className="font-bold text-gray-800 mt-1">{recommendation.action}</div>
+          <div className="text-xs text-gray-600 mt-1">{recommendation.reason}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs font-bold text-gray-500">Due</div>
+          <div className={`text-sm font-semibold ${recommendation.urgency === 'critical' ? 'text-red-600' : 'text-gray-700'}`}>
+            {recommendation.dueDate}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => onEmailClick(prospect.cid)}
+          className="flex-1 py-2 text-sm font-semibold bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+        >
+          📧 Email
+        </button>
+        <button
+          onClick={() => onLogVisit(prospect.cid)}
+          className="flex-1 py-2 text-sm font-semibold bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
+        >
+          ✓ Log Visit
+        </button>
+        <button className="flex-1 py-2 text-sm font-semibold bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+          📍 Map
+        </button>
+      </div>
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison function for more granular memoization
+  return (
+    prevProps.prospect.cid === nextProps.prospect.cid &&
+    prevProps.prospect.companyName === nextProps.prospect.companyName &&
+    prevProps.prospect.contactStatus === nextProps.prospect.contactStatus &&
+    prevProps.prospect.winProbability === nextProps.prospect.winProbability &&
+    prevProps.prospect.priority === nextProps.prospect.priority &&
+    prevProps.prospect.lastOutcome === nextProps.prospect.lastOutcome &&
+    prevProps.prospect.lastOutreachDate === nextProps.prospect.lastOutreachDate &&
+    prevProps.prospect.nextVisitDate === nextProps.prospect.nextVisitDate
+  );
+});
+
+// Memoized chart component
+interface ChartData {
+  data: number[];
+  labels: string[];
+  title: string;
+}
+
+export const BarChart = memo<ChartData>(({ data, labels, title }) => {
+  const max = useMemo(() => Math.max(...data, 1), [data]);
+
+  return (
+    <div className="flex flex-col h-48">
+      <div className="text-xs text-gray-500 mb-3 font-semibold">{title}</div>
+      <div className="flex items-end space-x-3 flex-1">
+        {data.map((val, i) => (
+          <div key={`${labels[i]}-${val}`} className="flex-1 flex flex-col items-center group">
+            <div
+              className="w-full bg-gradient-to-t from-green-600 to-green-400 rounded-t relative hover:from-green-700 hover:to-green-500 transition-all shadow-sm"
+              style={{ height: `${(val / max) * 100}%`, minHeight: val > 0 ? '8px' : '0' }}
+            >
+              <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap font-bold">
+                {val}
+              </div>
+            </div>
+            <div className="text-[10px] text-gray-600 mt-2 truncate w-full text-center font-medium">{labels[i]}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+// ============================================================================
+// CUSTOM HOOKS FOR PERFORMANCE
+// ============================================================================
+
+// Debounced search hook
+export const useDebounce = <T,>(value: T, delay: number): T => {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+};
+
+// Virtual scrolling hook for large lists
+interface VirtualScrollProps<T> {
+  items: T[];
+  itemHeight: number;
+  containerHeight: number;
+  renderItem: (item: T, index: number) => React.ReactNode;
+  overscan?: number;
+}
+
+export function useVirtualScroll<T>({
+  items,
+  itemHeight,
+  containerHeight,
+  renderItem,
+  overscan = 5
+}: VirtualScrollProps<T>) {
+  const [scrollTop, setScrollTop] = useState(0);
+
+  const visibleStartIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+  const visibleEndIndex = Math.min(
+    items.length - 1,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
+  );
+
+  const visibleItems = useMemo(() => 
+    items.slice(visibleStartIndex, visibleEndIndex + 1).map((item, index) => ({
+      item,
+      index: visibleStartIndex + index,
+      top: (visibleStartIndex + index) * itemHeight
+    }))
+  , [items, visibleStartIndex, visibleEndIndex, itemHeight]);
+
+  const totalHeight = items.length * itemHeight;
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  return {
+    visibleItems,
+    totalHeight,
+    handleScroll,
+    scrollTop
+  };
+}
+
+// Intersection Observer hook for lazy loading
+export const useIntersectionObserver = (
+  options: IntersectionObserverInit = {}
+): [React.RefCallback<HTMLElement>, boolean] => {
+  const [isIntersecting, setIsIntersecting] = useState(false);
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  const ref = useCallback((node: HTMLElement | null) => {
+    if (node !== null) {
+      setTarget(node);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!target) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsIntersecting(entry.isIntersecting);
+      },
+      options
+    );
+
+    observer.observe(target);
+
+    return () => {
+      observer.unobserve(target);
+    };
+  }, [target, options]);
+
+  return [ref, isIntersecting];
+};
+
+// Memoized expensive calculation hook
+export const useExpensiveMemo = <T,>(
+  factory: () => T,
+  dependencies: React.DependencyList,
+  enabled: boolean = true
+): T => {
+  return useMemo(() => {
+    if (!enabled) {
+      return factory();
+    }
+    return factory();
+  }, dependencies);
+};
+
+// ============================================================================
+// PERFORMANCE MONITORING
+// ============================================================================
+
+// Performance tracking component
+export const PerformanceTracker: React.FC<{ children: React.ReactNode; name: string }> = ({
+  children,
+  name
+}) => {
+  const renderStart = useRef<number>(0);
+  const renderEnd = useRef<number>(0);
+
+  useLayoutEffect(() => {
+    renderStart.current = performance.now();
+  });
+
+  useEffect(() => {
+    renderEnd.current = performance.now();
+    const renderTime = renderEnd.current - renderStart.current;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Performance] ${name} render time: ${renderTime.toFixed(2)}ms`);
+    }
+    
+    // In production, you might want to send this to analytics
+    if (renderTime > 16) { // If render takes longer than 16ms (60fps)
+      console.warn(`[Performance Warning] ${name} render time exceeded 16ms: ${renderTime.toFixed(2)}ms`);
+    }
+  });
+
+  return <>{children}</>;
+};
+
+// Bundle size analyzer (development only)
+export const useBundleSize = () => {
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development' && 'performance' in window) {
+      const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+      if (navigation) {
+        const bundleSize = navigation.transferSize;
+        console.log(`[Bundle Analysis] Total bundle size: ${(bundleSize / 1024).toFixed(2)}KB`);
+        
+        if (bundleSize > 1024 * 1024) { // > 1MB
+          console.warn('[Bundle Warning] Bundle size exceeds 1MB. Consider code splitting.');
+        }
+      }
+    }
+  }, []);
+};
+
+// ============================================================================
+// CODE SPLITTING UTILITIES
+// ============================================================================
+
+// Lazy loading wrapper with error boundary
+export const withLazyLoading = <P extends object>(
+  importFunc: () => Promise<{ default: React.ComponentType<P> }>,
+  fallback?: React.ComponentType
+) => {
+  const LazyComponent = React.lazy(importFunc);
+  
+  return (props: P) => (
+    <React.Suspense fallback={fallback ? <fallback /> : <div>Loading...</div>}>
+      <LazyComponent {...props} />
+    </React.Suspense>
+  );
+};
+
+// Dynamic import for components
+export const loadComponent = async <T>(
+  importFunc: () => Promise<T>
+): Promise<T | null> => {
+  try {
+    return await importFunc();
+  } catch (error) {
+    console.error('Failed to load component:', error);
+    return null;
+  }
+};

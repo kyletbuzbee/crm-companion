@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; padding: 10px; font-size: 13px; }
+        
+        #loader { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(255,255,255,0.95); display: flex; align-items: center; justify-content: center; 
+            z-index: 9999; flex-direction: column;
+        }
+        .spinner { 
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db; 
+            border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; 
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header h2 { font-size: 18px; margin-bottom: 5px; }
+        .sync-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; float: right; }
+        .sync-btn:hover { background: rgba(255,255,255,0.3); }
+        
+        .tabs { display: flex; background: white; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .tab { flex: 1; padding: 10px 5px; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; font-weight: 500; font-size: 11px; transition: all 0.3s; }
+        .tab:hover { background: #f8f9fa; }
+        .tab.active { border-bottom-color: #667eea; color: #667eea; }
+        
+        .panel { display: none; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 10px; }
+        .panel.active { display: block; }
+        
+        .task-item { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden; }
+        .task-item:hover { border-color: #667eea; background: #f8f9ff; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1); }
+        .snooze-btn { background: #ffc107; color: #000; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; margin-left: 8px; float: right; }
+        .snooze-btn:hover { background: #e0a800; }
+        .task-item.overdue { border-left: 4px solid #dc3545; background: linear-gradient(90deg, rgba(220, 53, 69, 0.05) 0%, rgba(255, 255, 255, 0.8) 20%); }
+        .task-item.hot { border-left: 4px solid #fd7e14; background: linear-gradient(90deg, rgba(253, 126, 20, 0.05) 0%, rgba(255, 255, 255, 0.8) 20%); }
+        .task-item.warm { border-left: 4px solid #ffc107; background: linear-gradient(90deg, rgba(255, 193, 7, 0.05) 0%, rgba(255, 255, 255, 0.8) 20%); }
+        .task-item.cold { border-left: 4px solid #6c757d; background: linear-gradient(90deg, rgba(108, 117, 125, 0.05) 0%, rgba(255, 255, 255, 0.8) 20%); }
+
+        .task-priority { position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 10px; text-transform: uppercase; }
+        .task-priority.high { background: #dc3545; color: white; }
+        .task-priority.medium { background: #fd7e14; color: white; }
+        .task-priority.low { background: #28a745; color: white; }
+
+        .task-name { font-weight: 600; font-size: 13px; color: #333; margin-bottom: 6px; }
+        .task-meta { font-size: 11px; color: #666; display: flex; justify-content: space-between; align-items: center; }
+        .task-status { font-weight: 500; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase; }
+        .task-status.overdue { background: #dc3545; color: white; }
+        .task-status.tomorrow { background: #ffc107; color: #000; }
+        .task-status.soon { background: #17a2b8; color: white; }
+
+        .tasks-summary { background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e9ecef; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+        .summary-item { text-align: center; }
+        .summary-value { font-size: 18px; font-weight: bold; color: #667eea; }
+        .summary-label { font-size: 10px; color: #666; text-transform: uppercase; }
+        
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 11px; color: #495057; }
+        select, input, textarea { width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 12px; }
+        
+        .btn { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; width: 100%; transition: all 0.2s; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5568d3; }
+        .btn-secondary { background: #6c757d; color: white; }
+        
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+        .stat-box { background: white; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #dee2e6; }
+        .stat-value { font-size: 20px; font-weight: 700; color: #667eea; }
+        .stat-label { font-size: 10px; color: #666; margin-top: 4px; }
+        
+        .date-range-picker { display: flex; gap: 8px; margin-bottom: 12px; }
+        .date-preset { flex: 1; padding: 6px; border: 1px solid #dee2e6; background: white; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: center; }
+        .date-preset:hover { background: #f8f9fa; }
+        .date-preset.active { background: #667eea; color: white; border-color: #667eea; }
+        
+        /* Simple CSS Charts */
+        .chart-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 11px; }
+        .chart-label { width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chart-bar-bg { flex: 1; background: #e9ecef; border-radius: 3px; height: 12px; margin: 0 8px; position: relative; }
+        .chart-bar-fill { background: #667eea; height: 100%; border-radius: 3px; width: 0%; transition: width 0.5s ease; }
+        .chart-val { width: 30px; text-align: right; font-weight: 600; color: #555; }
+    </style>
+</head>
+<body>
+    <div id="loader"><div class="spinner"></div><p style="margin-top: 10px; color: #666;">Loading...</p></div>
+
+    <div class="header">
+        <button class="sync-btn" onclick="syncData()">Sync</button>
+        <h2>K&L CRM</h2>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" data-tab="tasks" onclick="switchTab('tasks')">TASKS</div>
+        <div class="tab" data-tab="log" onclick="switchTab('log')">LOG ACTIVITY</div>
+        <div class="tab" data-tab="route" onclick="switchTab('route')">ROUTE PLANNER</div>
+        <div class="tab" data-tab="reports" onclick="switchTab('reports')">REPORTS</div>
+        <div class="tab" data-tab="admin" onclick="switchTab('admin')">ADMIN</div>
+    </div>
+
+    <div id="tasks-panel" class="panel active">
+        <div class="tasks-summary">
+            <h4 style="margin: 0 0 10px 0; color: #333;">Task Overview</h4>
+            <div class="summary-grid">
+                <div class="summary-item">
+                    <div class="summary-value" id="total-tasks">0</div>
+                    <div class="summary-label">Total Tasks</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-value" id="overdue-tasks">0</div>
+                    <div class="summary-label">Overdue</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-value" id="today-tasks">0</div>
+                    <div class="summary-label">Due Today</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-value" id="high-priority">0</div>
+                    <div class="summary-label">High Priority</div>
+                </div>
+            </div>
+        </div>
+        <div id="tasks-list"></div>
+    </div>
+
+    <div id="log-panel" class="panel">
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button class="btn btn-secondary" onclick="addNewCompany()" style="flex: 1; background: #28a745; border: 1px solid #28a745;">➕ Add New Company</button>
+        </div>
+        <div class="form-group">
+            <label>Select Company</label>
+            <select id="company-select" onchange="selectCompany(this.value)"><option value="">-- Select --</option><option value="new">-- Add New Company --</option></select>
+        </div>
+        <div id="company-context" style="display:none; background: #eef2ff; padding:10px; margin-bottom:10px; border-radius:4px;">
+            <div id="context-name" style="font-weight:700;"></div>
+            <div id="context-suggestion" style="font-size:11px; color:#555; margin-top:4px;"></div>
+        </div>
+        <div id="new-company-fields" style="display:none; background: #f8f9fa; padding:10px; margin-bottom:10px; border-radius:4px;">
+            <div class="form-group"><label>Company Name</label><input type="text" id="new-name-input" onblur="detectIndustryPreview()"></div>
+            <div class="form-group"><label>Address</label><input type="text" id="new-address-input" onblur="detectIndustryPreview()"></div>
+            <div id="industry-preview" style="display:none; background: #e9ecef; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; color: #495057;">
+                <strong>Auto-detected:</strong> <span id="detected-industry">Other</span> (Priority: <span id="detected-priority">50</span>)
+            </div>
+            <input type="hidden" id="detected-industry-hidden" value="">
+            <input type="hidden" id="detected-priority-hidden" value="">
+            <div id="geocoding-status" style="display:none; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;">
+                <strong>📍 Address Geocoding:</strong> <span id="geocoding-result">Processing...</span>
+            </div>
+            <div class="form-group"><label>Industry (leave blank for auto-detection)</label><input type="text" id="new-industry-input" placeholder="Auto-detected if blank"></div>
+            <div class="form-group"><label>Email</label><input type="email" id="new-email-input"></div>
+        </div>
+        <div class="form-group"><label>Outcome</label><select id="outcome-select" onchange="suggestFollowUp()">
+            <option value="">-- Select --</option><option value="Interested">Interested</option><option value="Not Interested">Not Interested</option><option value="Has Vendor">Has Vendor</option><option value="No Scrap">No Scrap</option><option value="Send Info">Send Info</option><option value="Left Message">Left Message</option><option value="Bad Timing">Bad Timing</option><option value="Won">Won</option><option value="Follow Up">Follow Up</option>
+        </select></div>
+        <div id="followup-suggestion" style="display:none; background: #d4edda; color: #155724; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 11px;"></div>
+        <div class="form-group"><label>Notes</label><textarea id="notes-input"></textarea></div>
+        <div class="form-group"><label>Next Date</label><input type="date" id="next-date-input"></div>
+        <div id="email-approval-section" style="display:none; background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+            <label style="display: flex; align-items: center; font-size: 12px; margin-bottom: 8px;">
+                <input type="checkbox" id="auto-send-email" style="margin-right: 8px;"> 📧 Auto-send follow-up email after logging activity
+            </label>
+            <div style="font-size: 11px; color: #856404;">Email will be sent immediately. Uncheck to create draft for review.</div>
+        </div>
+        <div style="background: #e7f3ff; border: 1px solid #b8daff; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+            <label style="display: flex; align-items: center; font-size: 12px; margin-bottom: 8px;">
+                <input type="checkbox" id="create-calendar-event" style="margin-right: 8px;" checked> 📅 Create calendar reminder for next follow-up
+            </label>
+            <div style="font-size: 11px; color: #004085;">Calendar event will be created automatically based on the next date.</div>
+        </div>
+        <div id="validation-feedback" style="display:none; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
+        <button class="btn btn-primary" onclick="submitActivity()">Log Activity</button>
+    </div>
+
+    <div id="route-panel" class="panel">
+        <div class="form-group">
+            <label>Number of Stops (1-20)</label>
+            <input type="number" id="stops-count" min="1" max="20" value="12" style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+        </div>
+        <div class="form-group">
+            <label>Mix Ratio: Outreach vs Prospects</label>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 11px; color: #666;">100% Prospects</span>
+                <input type="range" id="mix-ratio-slider" min="0" max="100" value="50" step="10" style="flex: 1;" oninput="updateMixRatio()">
+                <span style="font-size: 11px; color: #666;">100% Outreach</span>
+            </div>
+            <div id="mix-ratio-display" style="text-align: center; font-weight: bold; color: #667eea;">50% Prospects / 50% Outreach</div>
+        </div>
+        <div class="form-group"><label>Zip Filter</label><select id="zip-filter"><option value="">All</option></select></div>
+        <button class="btn btn-primary" onclick="generateRoute()">Generate Optimized Route</button>
+        <div id="route-result" style="display:none; margin-top:15px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4 style="margin: 0; color: #333;">Optimized Route</h4>
+                <button class="btn btn-secondary" onclick="openMaps()" style="font-size: 10px; padding: 4px 8px;">Open Maps</button>
+            </div>
+            <div id="route-stops" style="max-height: 200px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
+    <div id="reports-panel" class="panel">
+        <h3 style="margin-bottom: 10px; font-size: 14px;">Performance Dashboard</h3>
+
+        <div class="date-range-picker">
+            <button class="date-preset active" onclick="loadReports('7d')">7D</button>
+            <button class="date-preset" onclick="loadReports('30d')">30D</button>
+            <button class="date-preset" onclick="loadReports('month')">Mth</button>
+            <button class="date-preset" onclick="loadReports('quarter')">Quarter</button>
+            <button class="date-preset" id="custom-range-btn" onclick="toggleCustomDateRange()">Custom</button>
+        </div>
+
+        <div id="custom-date-range" style="display: none; margin-bottom: 12px; padding: 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #dee2e6;">
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                    <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px; color: #495057;">Start Date</label>
+                    <input type="date" id="report-start-date" style="width: 100%; padding: 6px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div style="flex: 1;">
+                    <label style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px; color: #495057;">End Date</label>
+                    <input type="date" id="report-end-date" style="width: 100%; padding: 6px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+            </div>
+            <button class="btn btn-secondary" onclick="loadCustomReports()" style="font-size: 11px; padding: 6px 12px; background: #6c757d;">Load Custom Range</button>
+        </div>
+
+        <button class="btn btn-primary" onclick="sendReport()" style="margin-bottom: 12px;">Send Report</button>
+
+        <div class="stats">
+            <div class="stat-box"><div class="stat-value" id="stat-visits">0</div><div class="stat-label">Visits</div></div>
+            <div class="stat-box"><div class="stat-value" id="stat-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+            <div class="stat-box"><div class="stat-value" id="stat-wins">0</div><div class="stat-label">Wins</div></div>
+        </div>
+
+        <h4 style="margin-top: 20px; margin-bottom: 8px; font-size: 12px;">Active Pipeline by Stage</h4>
+        <div id="pipeline-chart"></div>
+
+        <h4 style="margin-top: 16px; margin-bottom: 8px; font-size: 12px;">Top Active Industries</h4>
+        <div id="industry-chart"></div>
+
+        <h4 style="margin-top: 16px; margin-bottom: 8px; font-size: 12px;">Activity Trends (Last 7 Days)</h4>
+        <div id="trends-chart"></div>
+
+        <h4 style="margin-top: 16px; margin-bottom: 8px; font-size: 12px;">Conversion Funnel</h4>
+        <div id="funnel-chart"></div>
+
+        <h4 style="margin-top: 16px; margin-bottom: 8px; font-size: 12px;">Performance by Hour</h4>
+        <div id="hourly-chart"></div>
+    </div>
+
+    <div id="admin-panel" class="panel">
+        <h3 style="margin-bottom: 15px; font-size: 14px;">Administrative Functions</h3>
+
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #495057;">Task Management</h4>
+            <button class="btn btn-secondary" onclick="escalateOverdueTasks()" style="margin-bottom: 8px; background: #dc3545; border: 1px solid #dc3545;">Escalate Overdue Tasks</button>
+            <p style="font-size: 11px; color: #666; margin: 0;">Increase priority for tasks that are past due date.</p>
+        </div>
+
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #495057;">Bulk Operations</h4>
+            <div class="form-group">
+                <label style="font-size: 11px;">Bulk Update JSON (format: [{"cid": "CID-123", "priority": 90, "industry": "Metal", "outcome": "Interested"}])</label>
+                <textarea id="bulk-update-input" rows="4" placeholder='[{"cid": "CID-123", "priority": 90}]'></textarea>
+            </div>
+            <button class="btn btn-secondary" onclick="performBulkUpdate()" style="margin-bottom: 8px; background: #fd7e14; border: 1px solid #fd7e14;">Execute Bulk Update</button>
+            <p style="font-size: 11px; color: #666; margin: 0;">Update multiple prospects at once. Use valid JSON format.</p>
+        </div>
+
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #495057;">Data Maintenance</h4>
+            <button class="btn btn-secondary" onclick="archiveInactiveProspects()" style="margin-bottom: 8px; background: #6c757d; border: 1px solid #6c757d;">Archive Inactive Prospects</button>
+            <p style="font-size: 11px; color: #666; margin: 0;">Move prospects with 'Lost' or 'Not Interested' outcomes inactive for 6+ months to archive.</p>
+        </div>
+
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #495057;">System Testing</h4>
+            <button class="btn btn-secondary" onclick="runEndToEndTests()" style="margin-bottom: 8px; background: #28a745; border: 1px solid #28a745;">Run E2E Tests</button>
+            <div id="test-results" style="display: none; margin-top: 10px; padding: 10px; background: white; border-radius: 4px; border: 1px solid #dee2e6; max-height: 200px; overflow-y: auto; font-size: 11px;"></div>
+            <p style="font-size: 11px; color: #666; margin: 0;">Execute comprehensive system tests and view results.</p>
+        </div>
+    </div>
+
+    <script>
+        let appState = { companies: [], tasks: [], zips: [], routeData: null };
+
+        function showLoader() { document.getElementById('loader').style.display = 'flex'; }
+        function hideLoader() { document.getElementById('loader').style.display = 'none'; }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+
+            // Find tab by data-tab attribute
+            const tabElement = document.querySelector(`.tab[data-tab="${tabName}"]`);
+            if (tabElement) {
+                tabElement.classList.add('active');
+            }
+            document.getElementById(tabName + '-panel').classList.add('active');
+
+            if (tabName === 'reports') {
+                loadReports('7d'); // Auto load reports on tab switch
+            }
+        }
+
+        function loadInitialData() {
+            showLoader();
+            google.script.run.withSuccessHandler(data => {
+                appState = data;
+                renderTasks();
+                populateDropdowns();
+                hideLoader();
+            }).getInitialData();
+        }
+
+        function populateDropdowns() {
+            const sel = document.getElementById('company-select');
+            sel.innerHTML = '<option value="">-- Select --</option>';
+            appState.companies.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.cid;
+                opt.textContent = c.name;
+                sel.appendChild(opt);
+            });
+            const zip = document.getElementById('zip-filter');
+            appState.zips.forEach(z => {
+                const opt = document.createElement('option');
+                opt.value = z.zip;
+                opt.textContent = z.zip;
+                zip.appendChild(opt);
+            });
+        }
+
+        function renderTasks() {
+            const div = document.getElementById('tasks-list');
+            div.innerHTML = '';
+            if(appState.tasks.length === 0) {
+                div.innerHTML = '<p style="text-align:center;color:#999;margin-top:20px;">No urgent tasks.</p>';
+                updateTaskSummary(0, 0, 0, 0);
+                return;
+            }
+
+            let overdueCount = 0;
+            let todayCount = 0;
+            let highPriorityCount = 0;
+
+            const now = new Date();
+            const today = new Date(now);
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const nextWeek = new Date(now);
+            nextWeek.setDate(now.getDate() + 7);
+            nextWeek.setHours(23, 59, 59, 999);
+
+            appState.tasks.forEach(t => {
+                const d = document.createElement('div');
+                d.className = 'task-item';
+
+    // Determine status styling
+    let statusClass = 'task-status.soon';
+    let priorityClass = 'task-priority.low';
+    let borderClass = '';
+
+    if (t.status === 'Overdue') {
+        statusClass = 'task-status overdue';
+        borderClass = 'overdue';
+        overdueCount++;
+    } else if (t.nextDateTs) {
+        const taskDate = new Date(t.nextDateTs);
+        if (taskDate.toDateString() === today.toDateString()) {
+            statusClass = 'task-status tomorrow';
+            borderClass = 'hot'; // Mark as hot priority for today
+            todayCount++;
+        } else if (taskDate.getTime() >= tomorrow.getTime() && taskDate.getTime() < nextWeek.getTime()) {
+            statusClass = 'task-status soon';
+        }
+    }
+
+                if (t.priority >= 90) {
+                    priorityClass = 'task-priority high';
+                    highPriorityCount++;
+                } else if (t.priority >= 70) {
+                    priorityClass = 'task-priority medium';
+                }
+
+                d.className += ' ' + borderClass;
+
+                // Show notes if available, with truncation for long notes
+                let notesDisplay = '';
+                if (t.notes && t.notes.trim()) {
+                    const truncatedNotes = t.notes.length > 100 ? t.notes.substring(0, 100) + '...' : t.notes;
+                    notesDisplay = `<div class="task-notes" style="font-size: 11px; color: #666; margin-top: 4px; padding: 6px; background: #f8f9fa; border-radius: 4px; border-left: 2px solid #667eea;">
+                        📝 ${truncatedNotes}
+                        ${t.notes.length > 100 ? '<span style="color: #667eea; cursor: pointer;" onclick="showFullNotes(this, \'' + t.notes.replace(/'/g, '\\\'').replace(/"/g, '"') + '\')"> Show more</span>' : ''}
+                    </div>`;
+                }
+
+                d.innerHTML = `
+                    <div class="${priorityClass}">${t.priority >= 90 ? 'HIGH' : t.priority >= 70 ? 'MED' : 'LOW'}</div>
+                    <button class="snooze-btn" onclick="snoozeTask('${t.cid}', event)">⏰</button>
+                    <div class="task-name">${t.name}</div>
+                    <div class="task-meta">
+                        <span>${t.date}</span>
+                        <span class="${statusClass}">${t.status}</span>
+                    </div>
+                    ${notesDisplay}
+                `;
+                d.onclick = (e) => {
+                    // Prevent opening log panel if snooze button was clicked
+                    if (e.target.classList.contains('snooze-btn')) return;
+                    document.getElementById('company-select').value = t.cid;
+                    selectCompany(t.cid);
+                    switchTab('log');
+                };
+                div.appendChild(d);
+            });
+
+            updateTaskSummary(appState.tasks.length, overdueCount, todayCount, highPriorityCount);
+        }
+
+        function updateTaskSummary(total, overdue, today, highPriority) {
+            document.getElementById('total-tasks').innerText = total;
+            document.getElementById('overdue-tasks').innerText = overdue;
+            document.getElementById('today-tasks').innerText = today;
+            document.getElementById('high-priority').innerText = highPriority;
+        }
+
+        function selectCompany(cid) {
+            if(!cid) {
+                document.getElementById('company-context').style.display='none';
+                document.getElementById('new-company-fields').style.display='none';
+                return;
+            }
+            if(cid === 'new') {
+                document.getElementById('company-context').style.display='none';
+                document.getElementById('new-company-fields').style.display='block';
+                return;
+            }
+            document.getElementById('new-company-fields').style.display='none';
+            google.script.run.withSuccessHandler(ctx => {
+                if(ctx) {
+                    document.getElementById('company-context').style.display='block';
+                    document.getElementById('context-name').innerText = ctx.name;
+                    document.getElementById('context-suggestion').innerText = ctx.suggestion;
+                }
+            }).getCompanyContext(cid);
+        }
+
+        function submitActivity() {
+            let cid = document.getElementById('company-select').value;
+            const outcome = document.getElementById('outcome-select').value;
+            const notes = document.getElementById('notes-input').value;
+            const nextDate = document.getElementById('next-date-input').value;
+            const autoSendEmail = document.getElementById('auto-send-email')?.checked || false;
+            const createCalendarEvent = document.getElementById('create-calendar-event')?.checked || false;
+
+            if (!outcome) {
+                alert('Please select an outcome.');
+                return;
+            }
+
+            if (cid === 'new') {
+                const name = document.getElementById('new-name-input').value.trim();
+                const address = document.getElementById('new-address-input').value.trim();
+                const industry = document.getElementById('new-industry-input').value.trim();
+                const email = document.getElementById('new-email-input').value.trim();
+
+                if (!name) {
+                    alert('Company name is required.');
+                    return;
+                }
+
+                const prospectData = { name, address, industry, email };
+
+                // Validate data
+                google.script.run.withSuccessHandler(validation => {
+                    // Show validation feedback in UI
+                    const feedbackDiv = document.getElementById('validation-feedback');
+                    if (validation.errors && validation.errors.length > 0) {
+                        feedbackDiv.innerHTML = '<strong style="color:#721c24;">Validation Errors:</strong><br>' + validation.errors.join('<br>');
+                        feedbackDiv.style.backgroundColor = '#f8d7da';
+                        feedbackDiv.style.borderColor = '#f5c6cb';
+                        feedbackDiv.style.color = '#721c24';
+                        feedbackDiv.style.display = 'block';
+                        return;
+                    }
+                    if (validation.warnings && validation.warnings.length > 0) {
+                        feedbackDiv.innerHTML = '<strong style="color:#856404;">Validation Warnings:</strong><br>' + validation.warnings.join('<br>');
+                        feedbackDiv.style.backgroundColor = '#fff3cd';
+                        feedbackDiv.style.borderColor = '#ffeaa7';
+                        feedbackDiv.style.color = '#856404';
+                        feedbackDiv.style.display = 'block';
+                    } else {
+                        feedbackDiv.style.display = 'none';
+                    }
+
+                    showLoader();
+                    google.script.run.withSuccessHandler(newCid => {
+                        const formData = { cid: newCid, outcome, notes, nextDate, autoSendEmail, createCalendarEvent };
+                        google.script.run.withSuccessHandler(res => {
+                            hideLoader();
+                            alert(res.message);
+                            if(res.success) loadInitialData();
+                        }).logVisit(formData);
+                    }).addProspect(validation.standardized);
+                }).validateAndStandardize(prospectData);
+            } else if (cid) {
+                const formData = { cid, outcome, notes, nextDate, autoSendEmail, createCalendarEvent };
+                showLoader();
+                google.script.run.withSuccessHandler(res => {
+                    hideLoader();
+                    alert(res.message);
+                    if(res.success) loadInitialData();
+                }).logVisit(formData);
+            } else {
+                alert('Please select a company.');
+            }
+        }
+
+        function suggestFollowUp() {
+            const outcome = document.getElementById('outcome-select').value;
+            if (!outcome) {
+                document.getElementById('followup-suggestion').style.display = 'none';
+                document.getElementById('email-approval-section').style.display = 'none';
+                return;
+            }
+
+            google.script.run.withSuccessHandler(suggestion => {
+                if (suggestion.days) {
+                    const suggestedDate = new Date();
+                    suggestedDate.setDate(suggestedDate.getDate() + suggestion.days);
+                    const dateStr = suggestedDate.toISOString().split('T')[0];
+                    document.getElementById('next-date-input').value = dateStr;
+                    document.getElementById('followup-suggestion').innerText = suggestion.reason;
+                    document.getElementById('followup-suggestion').style.display = 'block';
+
+                    // Show email approval section for certain outcomes
+                    const emailOutcomes = ['Interested', 'Send Info', 'Follow Up'];
+                    if (emailOutcomes.includes(outcome)) {
+                        document.getElementById('email-approval-section').style.display = 'block';
+                        document.getElementById('auto-send-email').checked = false; // Default to unchecked
+                    } else {
+                        document.getElementById('email-approval-section').style.display = 'none';
+                    }
+                } else {
+                    document.getElementById('followup-suggestion').style.display = 'none';
+                    document.getElementById('email-approval-section').style.display = 'none';
+                }
+            }).autoSuggestFollowUp(outcome);
+        }
+
+        function detectIndustryPreview() {
+            const name = document.getElementById('new-name-input').value.trim();
+            const address = document.getElementById('new-address-input').value.trim();
+
+            if (!name || !address) return;
+
+            // Show geocoding status
+            const geocodingDiv = document.getElementById('geocoding-status');
+            geocodingDiv.style.display = 'block';
+            document.getElementById('geocoding-result').innerText = 'Processing...';
+
+            google.script.run.withSuccessHandler(detection => {
+                if (detection.industry) {
+                    document.getElementById('detected-industry').innerText = detection.industry;
+                    document.getElementById('detected-priority').innerText = detection.priority;
+                    document.getElementById('detected-industry-hidden').value = detection.industry;
+                    document.getElementById('detected-priority-hidden').value = detection.priority;
+                    document.getElementById('industry-preview').style.display = 'block';
+                }
+            }).detectIndustry(name, address);
+
+            // Test geocoding
+            google.script.run.withSuccessHandler(geocodeResult => {
+                const resultSpan = document.getElementById('geocoding-result');
+                if (geocodeResult.status === 'OK') {
+                    resultSpan.innerText = `✅ ${geocodeResult.formatted_address}`;
+                    geocodingDiv.style.backgroundColor = '#d4edda';
+                    geocodingDiv.style.borderColor = '#c3e6cb';
+                    geocodingDiv.style.color = '#155724';
+                } else if (geocodeResult.status === 'ZERO_RESULTS') {
+                    resultSpan.innerText = '❌ Address not found';
+                    geocodingDiv.style.backgroundColor = '#f8d7da';
+                    geocodingDiv.style.borderColor = '#f5c6cb';
+                    geocodingDiv.style.color = '#721c24';
+                } else {
+                    resultSpan.innerText = `❌ ${geocodeResult.status}`;
+                    geocodingDiv.style.backgroundColor = '#f8d7da';
+                    geocodingDiv.style.borderColor = '#f5c6cb';
+                    geocodingDiv.style.color = '#721c24';
+                }
+            }).geocodeWithNominatim(address);
+        }
+
+        function addNewCompany() {
+            document.getElementById('company-select').value = 'new';
+            selectCompany('new');
+        }
+
+        function updateMixRatio() {
+            const slider = document.getElementById('mix-ratio-slider');
+            const display = document.getElementById('mix-ratio-display');
+            const value = slider.value;
+            const outreachPercent = value;
+            const prospectsPercent = 100 - value;
+            display.innerText = `${prospectsPercent}% Prospects / ${outreachPercent}% Outreach`;
+        }
+
+        function generateRoute() {
+            showLoader();
+            const mixRatio = parseInt(document.getElementById('mix-ratio-slider').value);
+            const maxStops = parseInt(document.getElementById('stops-count').value);
+            const opts = {
+                zip: document.getElementById('zip-filter').value,
+                mixRatio: mixRatio,
+                maxStops: maxStops
+            };
+            google.script.run.withSuccessHandler(res => {
+                hideLoader();
+                if(res.error) return alert(res.error);
+                appState.routeData = res;
+                const div = document.getElementById('route-stops');
+                div.innerHTML = res.stops.map((s,i) => `<div style="padding:8px; border-bottom:1px solid #eee; display:flex; justify-content:space-between;">
+                    <span><strong>${i+1}.</strong> ${s.name}</span>
+                    <span style="color:#667eea; font-size:10px;">${s.dist} • ${s.type}</span>
+                </div>`).join('');
+                document.getElementById('route-result').style.display='block';
+            }).getCustomRoute(opts);
+        }
+
+        function openMaps() {
+            if(appState.routeData) window.open(appState.routeData.mapsUrl, '_blank');
+        }
+
+        function syncData() {
+            showLoader();
+            google.script.run.withSuccessHandler(() => loadInitialData()).syncProspectsFromOutreach();
+        }
+
+        // --- REPORTING LOGIC ---
+
+        function loadReports(range) {
+            // UI Update
+            document.querySelectorAll('.date-preset').forEach(b => b.classList.remove('active'));
+            // Simple logic to highlight clicked button logic would be better with direct element reference but this works for now
+            Array.from(document.querySelectorAll('.date-preset')).find(b => b.innerText.toLowerCase().includes(range === 'month' ? 'mth' : range)).classList.add('active');
+
+            showLoader();
+            google.script.run.withSuccessHandler(renderDashboard).getReportingDataWithRange(range);
+        }
+
+        function renderDashboard(data) {
+            hideLoader();
+            if (data.error) {
+                console.error('Reporting error:', data.error);
+                // Show error message in the UI instead of just alerting
+                document.getElementById('stat-visits').innerText = 'Error';
+                document.getElementById('stat-winrate').innerText = 'Error';
+                document.getElementById('stat-wins').innerText = 'Error';
+                document.getElementById('pipeline-chart').innerHTML = '<p style="color:#dc3545;font-size:12px;text-align:center;">Failed to load data</p>';
+                document.getElementById('industry-chart').innerHTML = '<p style="color:#dc3545;font-size:12px;text-align:center;">Failed to load data</p>';
+                alert('Unable to load report data: ' + data.error);
+                return;
+            }
+
+            // Validate data structure
+            if (!data || typeof data !== 'object') {
+                console.error('Invalid data format received');
+                alert('Received invalid data format from server');
+                return;
+            }
+
+            // Safely set values with fallbacks
+            document.getElementById('stat-visits').innerText = data.visits || 0;
+            document.getElementById('stat-winrate').innerText = data.winRate || '0%';
+            document.getElementById('stat-wins').innerText = data.wins || 0;
+
+            // Render charts with error handling
+            try {
+                renderCharts(data.pipelineLabels || [], data.pipelineValues || [], 'pipeline-chart');
+                renderCharts(data.industryLabels || [], data.industryValues || [], 'industry-chart');
+                renderTrendsChart(data.trendsLabels || [], data.trendsValues || [], 'trends-chart');
+                renderFunnelChart(data.funnelLabels || [], data.funnelValues || [], 'funnel-chart');
+                renderHourlyChart(data.hourlyLabels || [], data.hourlyValues || [], 'hourly-chart');
+            } catch (chartError) {
+                console.error('Chart rendering error:', chartError);
+                document.getElementById('pipeline-chart').innerHTML = '<p style="color:#dc3545;font-size:12px;text-align:center;">Chart error</p>';
+                document.getElementById('industry-chart').innerHTML = '<p style="color:#dc3545;font-size:12px;text-align:center;">Chart error</p>';
+            }
+        }
+
+        function renderCharts(labels, values, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (!values || values.length === 0) { container.innerHTML = '<p style="color:#999;font-size:11px;">No data</p>'; return; }
+
+            // Ensure values are numbers
+            values = values.map(v => parseFloat(v) || 0);
+            const max = Math.max(...values) || 1;
+
+            labels.forEach((label, i) => {
+                const val = values[i];
+                const width = (val / max) * 100;
+
+                const row = document.createElement('div');
+                row.className = 'chart-row';
+                row.innerHTML = `
+                    <div class="chart-label" title="${label}">${label}</div>
+                    <div class="chart-bar-bg"><div class="chart-bar-fill" style="width:${width}%"></div></div>
+                    <div class="chart-val">${val}</div>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        function renderTrendsChart(labels, values, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (!labels || !values || labels.length === 0 || values.length === 0) {
+                container.innerHTML = '<p style="color:#999;font-size:11px;">No trend data</p>';
+                return;
+            }
+
+            const max = Math.max(...values) || 1;
+            const stepX = 250 / (labels.length - 1);
+
+            let bars = '';
+            labels.forEach((label, i) => {
+                const x = 25 + i * stepX;
+                const height = (values[i] / max) * 120;
+                const y = 160 - height;
+
+                bars += `<rect x="${x - 8}" y="${y}" width="16" height="${height}" fill="#17a2b8" stroke="#fff" stroke-width="1"/>`;
+                bars += `<text x="${x}" y="${y - 5}" text-anchor="middle" font-size="8" fill="#333">${label}</text>`;
+                bars += `<text x="${x}" y="${y + height + 15}" text-anchor="middle" font-size="10" fill="#333">${values[i]}</text>`;
+            });
+
+            container.innerHTML = `<svg width="300" height="200" viewBox="0 0 300 200">${bars}<text x="150" y="190" text-anchor="middle" font-size="12" fill="#666">Activity Trends (Last 7 Days)</text></svg>`;
+        }
+
+        function renderFunnelChart(labels, values, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (!labels || !values || labels.length === 0 || values.length === 0) {
+                container.innerHTML = '<p style="color:#999;font-size:11px;">No funnel data</p>';
+                return;
+            }
+
+            const max = Math.max(...values) || 1;
+            const stepY = 160 / labels.length;
+
+            let funnel = '';
+            labels.forEach((label, i) => {
+                const y = 20 + i * stepY;
+                const width = (values[i] / max) * 200;
+                const x = 50 + (200 - width) / 2;
+
+                const color = i === 0 ? '#6c757d' : i === 1 ? '#ffc107' : i === 2 ? '#fd7e14' : '#28a745';
+
+                funnel += `<rect x="${x}" y="${y}" width="${width}" height="${stepY - 5}" fill="${color}" stroke="#fff" stroke-width="1"/>`;
+                funnel += `<text x="${x + width + 10}" y="${y + stepY/2 + 3}" font-size="11" fill="#333">${label}: ${values[i]}</text>`;
+            });
+
+            container.innerHTML = `<svg width="300" height="200" viewBox="0 0 300 200">${funnel}<text x="150" y="190" text-anchor="middle" font-size="12" fill="#666">Conversion Funnel</text></svg>`;
+        }
+
+        function renderHourlyChart(labels, values, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (!labels || !values || labels.length === 0 || values.length === 0) {
+                container.innerHTML = '<p style="color:#999;font-size:11px;">No hourly data</p>';
+                return;
+            }
+
+            const max = Math.max(...values) || 1;
+            const stepX = 250 / (labels.length - 1);
+
+            let line = '';
+            let points = '';
+
+            labels.forEach((label, i) => {
+                const x = 25 + i * stepX;
+                const height = (values[i] / max) * 120;
+                const y = 160 - height;
+
+                // Line points
+                if (i === 0) {
+                    line = `M${x},${y}`;
+                } else {
+                    line += ` L${x},${y}`;
+                }
+
+                // Data points
+                points += `<circle cx="${x}" cy="${y}" r="3" fill="#e74c3c" stroke="#fff" stroke-width="2"/>`;
+                points += `<text x="${x}" y="${y - 8}" text-anchor="middle" font-size="8" fill="#333">${values[i]}</text>`;
+
+                // Hour labels (show every 4th hour)
+                if (i % 4 === 0) {
+                    points += `<text x="${x}" y="175" text-anchor="middle" font-size="9" fill="#666">${label}</text>`;
+                }
+            });
+
+            container.innerHTML = `<svg width="300" height="200" viewBox="0 0 300 200"><path d="${line}" stroke="#e74c3c" stroke-width="2" fill="none"/>${points}<text x="150" y="190" text-anchor="middle" font-size="12" fill="#666">Performance by Hour</text></svg>`;
+        }
+
+        function toggleCustomDateRange() {
+            const customDiv = document.getElementById('custom-date-range');
+            const customBtn = document.getElementById('custom-range-btn');
+
+            // Remove active class from all preset buttons
+            document.querySelectorAll('.date-preset').forEach(b => b.classList.remove('active'));
+
+            if (customDiv.style.display === 'none' || customDiv.style.display === '') {
+                customDiv.style.display = 'block';
+                customBtn.classList.add('active');
+                // Set default dates (last 30 days)
+                const now = new Date();
+                const thirtyDaysAgo = new Date(now);
+                thirtyDaysAgo.setDate(now.getDate() - 30);
+                document.getElementById('report-start-date').value = thirtyDaysAgo.toISOString().split('T')[0];
+                document.getElementById('report-end-date').value = now.toISOString().split('T')[0];
+            } else {
+                customDiv.style.display = 'none';
+                customBtn.classList.remove('active');
+                // Default back to 7D
+                loadReports('7d');
+            }
+        }
+
+        function loadCustomReports() {
+            const startDateStr = document.getElementById('report-start-date').value;
+            const endDateStr = document.getElementById('report-end-date').value;
+
+            if (!startDateStr || !endDateStr) {
+                alert('Please select both start and end dates.');
+                return;
+            }
+
+            const startDate = new Date(startDateStr);
+            const endDate = new Date(endDateStr);
+
+            if (startDate > endDate) {
+                alert('Start date cannot be after end date.');
+                return;
+            }
+
+            // Create a custom range object to pass to the backend
+            const customRange = {
+                startDate: startDate.toISOString(),
+                endDate: endDate.toISOString()
+            };
+
+            showLoader();
+            google.script.run.withSuccessHandler(renderDashboard).getReportingDataWithRange(customRange);
+        }
+
+        function sendReport() {
+            const activeBtn = document.querySelector('.date-preset.active');
+            if (!activeBtn) return alert('No date range selected.');
+            const range = activeBtn.innerText.toLowerCase();
+
+            let startDate, endDate, reportType;
+            const now = new Date();
+
+            if (range === 'custom') {
+                // Handle custom date range
+                const startDateStr = document.getElementById('report-start-date').value;
+                const endDateStr = document.getElementById('report-end-date').value;
+
+                if (!startDateStr || !endDateStr) {
+                    alert('Please select both start and end dates for custom range.');
+                    return;
+                }
+
+                startDate = new Date(startDateStr);
+                endDate = new Date(endDateStr);
+
+                if (startDate > endDate) {
+                    alert('Start date cannot be after end date.');
+                    return;
+                }
+
+                reportType = 'CUSTOM';
+            } else {
+                // Handle preset ranges
+                if (range.includes('7d')) {
+                    startDate = new Date(now);
+                    startDate.setDate(now.getDate() - 7);
+                    reportType = '7D';
+                } else if (range.includes('30d')) {
+                    startDate = new Date(now);
+                    startDate.setDate(now.getDate() - 30);
+                    reportType = '30D';
+                } else if (range.includes('mth')) {
+                    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    reportType = 'MONTH';
+                } else if (range.includes('qtr')) {
+                    const quarterStart = Math.floor(now.getMonth() / 3) * 3;
+                    startDate = new Date(now.getFullYear(), quarterStart, 1);
+                    reportType = 'QUARTER';
+                }
+                endDate = new Date(now);
+            }
+
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setHours(23, 59, 59, 999);
+
+            showLoader();
+            google.script.run.withSuccessHandler(res => {
+                hideLoader();
+                alert(res);
+            }).sendBossEmail({ startDate: startDate.toISOString(), endDate: endDate.toISOString(), type: reportType });
+        }
+
+        // --- ADMIN FUNCTIONS ---
+
+        function escalateOverdueTasks() {
+            if (!confirm('This will escalate overdue tasks by increasing their priority. Continue?')) return;
+            showLoader();
+            google.script.run.withSuccessHandler(result => {
+                hideLoader();
+                if (result && result.success !== false) {
+                    alert(`Escalated ${result} overdue tasks.`);
+                    loadInitialData(); // Refresh data
+                } else {
+                    alert('Failed to escalate tasks: ' + (result.message || 'Unknown error'));
+                }
+            }).escalateOverdueTasks();
+        }
+
+        function performBulkUpdate() {
+            const jsonText = document.getElementById('bulk-update-input').value.trim();
+            if (!jsonText) {
+                alert('Please enter bulk update data in JSON format.');
+                return;
+            }
+
+            try {
+                const updates = JSON.parse(jsonText);
+                if (!Array.isArray(updates) || updates.length === 0) {
+                    alert('Please provide a valid JSON array of updates.');
+                    return;
+                }
+
+                // Validate each update
+                for (const update of updates) {
+                    if (!update.cid) {
+                        alert('Each update must include a "cid" field.');
+                        return;
+                    }
+                    if (update.priority !== undefined && (isNaN(update.priority) || update.priority < 0 || update.priority > 100)) {
+                        alert('Invalid priority value. Must be number between 0-100.');
+                        return;
+                    }
+                    if (update.industry && typeof update.industry !== 'string') {
+                        alert('Industry must be a string.');
+                        return;
+                    }
+                    if (update.outcome && typeof update.outcome !== 'string') {
+                        alert('Outcome must be a string.');
+                        return;
+                    }
+                }
+
+                if (!confirm(`Update ${updates.length} prospect(s)? This cannot be undone.`)) return;
+
+                showLoader();
+                google.script.run.withSuccessHandler(result => {
+                    hideLoader();
+                    if (result && result.success) {
+                        alert(result.message);
+                        document.getElementById('bulk-update-input').value = '';
+                        loadInitialData(); // Refresh data
+                    } else {
+                        alert('Bulk update failed: ' + (result.message || 'Unknown error'));
+                    }
+                }).bulkUpdateOperations(updates);
+            } catch (e) {
+                alert('Invalid JSON format: ' + e.message);
+            }
+        }
+
+        function archiveInactiveProspects() {
+            if (!confirm('This will archive prospects with "Lost" or "Not Interested" outcomes inactive for 6+ months. Continue?')) return;
+            showLoader();
+            google.script.run.withSuccessHandler(result => {
+                hideLoader();
+                if (result && result.success) {
+                    alert(result.message);
+                    loadInitialData(); // Refresh data
+                } else {
+                    alert('Archive failed: ' + (result.message || 'Unknown error'));
+                }
+            }).archiveInactiveProspects();
+        }
+
+        function showFullNotes(element, fullNotes) {
+            // Replace the truncated notes with full notes
+            const notesDiv = element.parentElement;
+            const fullNotesHtml = `<div class="task-notes" style="font-size: 11px; color: #666; margin-top: 4px; padding: 6px; background: #f8f9fa; border-radius: 4px; border-left: 2px solid #667eea;">
+                📝 ${fullNotes}
+                <span style="color: #667eea; cursor: pointer; margin-left: 8px;" onclick="hideFullNotes(this)"> Show less</span>
+            </div>`;
+            notesDiv.outerHTML = fullNotesHtml;
+        }
+
+        function hideFullNotes(element) {
+            // This would need to be implemented to collapse back to truncated view
+            // For now, we'll just reload the tasks to refresh the view
+            loadInitialData();
+        }
+
+        function snoozeTask(cid, event) {
+            event.stopPropagation(); // Prevent triggering the task click
+            const days = prompt('How many days to snooze this task?', '7');
+            if (days && !isNaN(days) && days > 0) {
+                showLoader();
+                google.script.run.withSuccessHandler(result => {
+                    hideLoader();
+                    if (result && result.success) {
+                        alert(result.message);
+                        loadInitialData(); // Refresh tasks
+                    } else {
+                        alert('Failed to snooze task: ' + (result.message || 'Unknown error'));
+                    }
+                }).snoozeProspect(cid, parseInt(days));
+            }
+        }
+
+        function runEndToEndTests() {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = '<p style="color:#666;">Running tests...</p>';
+
+            google.script.run.withSuccessHandler(results => {
+                let html = '<h4>Test Results</h4>';
+                html += `<p><strong>Summary:</strong> ${results.passed} passed, ${results.failed} failed</p>`;
+                if (results.tests && results.tests.length > 0) {
+                    html += '<div style="margin-top:10px;">';
+                    results.tests.forEach(test => {
+                        const color = test.status === 'PASS' ? '#28a745' : '#dc3545';
+                        html += `<div style="margin-bottom:5px; padding:5px; background:#f8f9fa; border-left:3px solid ${color};">
+                            <strong style="color:${color};">${test.status}:</strong> ${test.name}<br>
+                            <small>${test.details}</small>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+                resultsDiv.innerHTML = html;
+            }).runEndToEndTests();
+        }
+
+        window.onload = loadInitialData;
+    </script>
+</body>
+</html>

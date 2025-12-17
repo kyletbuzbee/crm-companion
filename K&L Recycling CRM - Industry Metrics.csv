@@ -1,0 +1,8 @@
+Industry,Small Operation (Monthly),Mid-Size Operation (Monthly),Large Operation (Monthly),Primary Scrap Type(s),High-Value Materials,Profitability Threshold
+Plumbing,200-500 lbs,"500-1,500 lbs","2,000+ lbs","Copper, Brass","Bare Bright Copper ($4.43/lb), Brass ($2.64-3.04/lb)",25-30 lbs (High value)
+Roofing & Gutter,300-800 lbs,"1,000-3,000 lbs","5,000+ lbs","Steel, Copper Flashing","Copper Flashing ($3.90/lb), Steel (~$0.10/lb)","800-1,000 lbs steel min"
+HVAC,100-400 lbs,"500-2,000 lbs","2,000+ lbs",Aluminum-Copper Coils,Al-Cu Coils ($1.94/lb),100-150 lbs min
+Welding & Metal Fabrication,300-800 lbs,"1,000-3,000 lbs","5,000+ lbs","Steel, Aluminum, Stainless","Steel (~$0.10/lb), Aluminum ($0.53/lb)",500-800 lbs min
+Electrical,50-200 lbs,"300-1,000 lbs","2,000+ lbs",Copper Wire,Bare Bright Copper ($4.43/lb),25-30 lbs (Very High value)
+Automotive/Machine Shop,200-600 lbs,"500-2,000 lbs","2,000-5,000+ lbs",Mixed Ferrous & Non-Ferrous,Mixed ($0.08-0.53/lb avg),"800-1,000 lbs min"
+Construction/Demolition,"500-2,000 lbs","5,000-15,000 lbs","20,000+ lbs",Mixed Heavy Metal,Mixed Heavy ($0.08-0.53/lb),"1,000+ lbs min"
