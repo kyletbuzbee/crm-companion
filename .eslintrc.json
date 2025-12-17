@@ -30,6 +30,9 @@
       "version": "detect"
     }
   },
+  "globals": {
+    "React": "readonly"
+  },
   "ignorePatterns": [
     "node_modules/",
     "dist/",
