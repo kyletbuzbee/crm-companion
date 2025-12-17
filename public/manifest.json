@@ -1,7 +1,7 @@
 {
   "name": "K&L Recycling CRM",
   "short_name": "KL CRM",
-  "description": "Enterprise Sales CRM for K&L Recycling - Track prospects, manage outreach, and boosting revenue",
+  "description": "Enterprise Sales CRM for K&L Recycling - Track prospects, manage outreach, and boost revenue with AI-powered lead scoring",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F5F5F5",
@@ -46,18 +46,41 @@
   ],
   "shortcuts": [
     {
-      "name": "Add Prospect",
+      "name": "Add New Prospect",
       "short_name": "New Prospect",
-      "description": "Quickly add a new prospect",
+      "description": "Quickly add a new sales prospect",
       "url": "/prospects",
       "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Log Visit",
-      "short_name": "Visit",
-      "description": "Log a customer visit",
+      "name": "Log Sales Visit",
+      "short_name": "Log Visit",
+      "description": "Record a customer visit and outcome",
       "url": "/outreach",
       "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Revenue Dashboard",
+      "short_name": "Revenue",
+      "description": "View sales metrics and forecasting",
+      "url": "/revenue",
+      "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192" }]
     }
-  ]
+  ],
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "prospects",
+          "accept": ["text/csv", ".csv"]
+        }
+      ]
+    }
+  }
 }
