@@ -1,5 +1,3 @@
-import React from 'react';
-
 // ============================================================================
 // EXPORTED TYPES FOR OTHER MODULES
 // ============================================================================
@@ -69,5 +67,3 @@ export interface EmailTemplate {
   subject: string;
   body: string;
 }
-
-// React import needed for JSX
