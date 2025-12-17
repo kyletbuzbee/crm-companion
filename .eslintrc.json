@@ -30,13 +30,6 @@
       "version": "detect"
     }
   },
-  "globals": {
-    "React": "readonly",
-    "User": "readonly",
-    "Prospect": "readonly",
-    "Outreach": "readonly",
-    "EmailTemplate": "readonly"
-  },
   "ignorePatterns": [
     "node_modules/",
     "dist/",

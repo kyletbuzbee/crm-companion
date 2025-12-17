@@ -203,6 +203,8 @@ export interface ThemeConfig {
   };
 }
 
-// Export original types for compatibility
-export type { UserRole, TabType } from './index';
-export type { User, SearchFilters, Prospect, Outreach, EmailTemplate } from './index';
+// Import original types for compatibility
+import type { UserRole, TabType, User, SearchFilters, Prospect, Outreach, EmailTemplate } from './index';
+
+// Re-export for external use
+export type { UserRole, TabType, User, SearchFilters, Prospect, Outreach, EmailTemplate };
