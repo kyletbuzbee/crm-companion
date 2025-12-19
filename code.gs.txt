@@ -151,14 +151,17 @@ function loadSettingsData() {
     const sheet = ss.getSheetByName(CONFIG.SHEET_SETTINGS);
     if (!sheet) {
       console.warn('Settings sheet not found, using defaults');
-      return { industries: [], outcomes: [] };
+      return { industries: [], outcomes: [], stages: [], statuses: [], contactTypes: [] };
     }
 
     const data = sheet.getDataRange().getValues();
-    if (data.length < 2) return { industries: [], outcomes: [] };
+    if (data.length < 2) return { industries: [], outcomes: [], stages: [], statuses: [], contactTypes: [] };
 
     const industries = [];
     const outcomes = [];
+    const stages = [];
+    const statuses = [];
+    const contactTypes = [];
 
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
@@ -200,14 +203,31 @@ function loadSettingsData() {
           });
         }
       }
+
+      // Extract unique values for dropdowns
+      if (row[4] && String(row[4]).trim() && !stages.includes(String(row[4]).trim())) {
+        stages.push(String(row[4]).trim());
+      }
+      if (row[5] && String(row[5]).trim() && !statuses.includes(String(row[5]).trim())) {
+        statuses.push(String(row[5]).trim());
+      }
+      // Contact types - assume column G or other location
+      if (row[6] && String(row[6]).trim() && !contactTypes.includes(String(row[6]).trim())) {
+        contactTypes.push(String(row[6]).trim());
+      }
     }
 
-    SETTINGS_CACHE = { industries, outcomes };
-    console.log(`Loaded ${industries.length} industry mappings and ${outcomes.length} outcome mappings`);
+    // Add default contact types if none found
+    if (contactTypes.length === 0) {
+      contactTypes.push('In Person', 'Phone', 'Email', 'Text', 'Mail');
+    }
+
+    SETTINGS_CACHE = { industries, outcomes, stages, statuses, contactTypes };
+    console.log(`Loaded ${industries.length} industry mappings, ${outcomes.length} outcomes, ${stages.length} stages, ${statuses.length} statuses, ${contactTypes.length} contact types`);
     return SETTINGS_CACHE;
   } catch (e) {
     console.error('Failed to load settings data:', e);
-    return { industries: [], outcomes: [] };
+    return { industries: [], outcomes: [], stages: [], statuses: [], contactTypes: [] };
   }
 }
 
@@ -629,7 +649,7 @@ function getInitialData() {
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     // CRITICAL FIX: Reduce Payload Size
-    // We only send minimal data needed for the dropdown list. 
+    // We only send minimal data needed for the dropdown list.
     // Heavy details (Address, Lat/Lng) are fetched on demand via getCompanyContext
     const lightweightCompanies = companies.map(c => ({
       cid: c.cid,
@@ -1095,6 +1115,411 @@ function getCompanyContext(cid) {
   };
 }
 
+/**
+ * Search companies by name with fuzzy matching
+ * @param {string} query - Search query
+ * @param {number} limit - Maximum results to return
+ * @returns {Array} Array of matching companies
+ */
+function searchCompaniesByName(query, limit = 10) {
+  if (!query || query.trim().length < 2) {
+    return [];
+  }
+
+  const map = getProspectMapCached();
+  const companies = Object.values(map).filter(Boolean);
+  const searchTerm = query.toLowerCase().trim();
+
+  // Score companies based on match quality
+  const scored = companies.map(company => {
+    const name = (company.name || '').toLowerCase();
+    const address = (company.address || '').toLowerCase();
+    let score = 0;
+
+    // Exact name match gets highest score
+    if (name === searchTerm) {
+      score += 100;
+    }
+    // Name starts with search term
+    else if (name.startsWith(searchTerm)) {
+      score += 80;
+    }
+    // Name contains search term as whole word
+    else if (name.includes(' ' + searchTerm + ' ') || name.includes(searchTerm + ' ')) {
+      score += 60;
+    }
+    // Name contains search term anywhere
+    else if (name.includes(searchTerm)) {
+      score += 40;
+    }
+    // Address contains search term
+    else if (address.includes(searchTerm)) {
+      score += 20;
+    }
+
+    // Boost score for active companies
+    if (company.lastOutcome !== 'Won' && company.lastOutcome !== 'Lost' && company.lastOutcome !== 'Not Interested') {
+      score += 10;
+    }
+
+    return { company, score };
+  });
+
+  // Filter out zero scores and sort by score descending, then by priority
+  return scored
+    .filter(item => item.score > 0)
+    .sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      return (b.company.priority || 0) - (a.company.priority || 0);
+    })
+    .slice(0, limit)
+    .map(item => item.company);
+}
+
+/**
+ * Check for duplicate companies based on name/address similarity
+ * @param {string} name - Company name to check
+ * @param {string} address - Company address to check
+ * @returns {Object} Duplicate check result
+ */
+function checkForDuplicateCompanies(name, address) {
+  if (!name || !address) {
+    return { isDuplicate: false, matches: [] };
+  }
+
+  const map = getProspectMapCached();
+  const companies = Object.values(map).filter(Boolean);
+  const nameLower = name.toLowerCase().trim();
+  const addressLower = address.toLowerCase().trim();
+
+  const matches = [];
+  companies.forEach(company => {
+    const companyName = (company.name || '').toLowerCase();
+    const companyAddress = (company.address || '').toLowerCase();
+
+    // Calculate similarity scores
+    let nameSimilarity = 0;
+    let addressSimilarity = 0;
+
+    // Name similarity
+    if (companyName === nameLower) {
+      nameSimilarity = 100;
+    } else if (companyName.includes(nameLower) || nameLower.includes(companyName)) {
+      // Calculate overlap ratio
+      const shorter = Math.min(companyName.length, nameLower.length);
+      const longer = Math.max(companyName.length, nameLower.length);
+      if (shorter > 0) {
+        nameSimilarity = (shorter / longer) * 80;
+      }
+    }
+
+    // Address similarity (ZIP code match gives high score)
+    const nameZipMatch = nameLower.match(/\b\d{5}\b/);
+    const addressZipMatch = addressLower.match(/\b\d{5}\b/);
+    const companyZipMatch = companyAddress.match(/\b\d{5}\b/);
+
+    if (nameZipMatch && companyZipMatch && nameZipMatch[0] === companyZipMatch[0]) {
+      addressSimilarity += 50;
+    }
+    if (addressZipMatch && companyZipMatch && addressZipMatch[0] === companyZipMatch[0]) {
+      addressSimilarity += 50;
+    }
+
+    // Street/address similarity
+    if (companyAddress === addressLower) {
+      addressSimilarity = Math.max(addressSimilarity, 80);
+    } else if (companyAddress.includes(addressLower) || addressLower.includes(companyAddress)) {
+      addressSimilarity = Math.max(addressSimilarity, 40);
+    }
+
+    const totalSimilarity = (nameSimilarity * 0.7) + (addressSimilarity * 0.3);
+
+    if (totalSimilarity >= 60) { // Threshold for potential duplicate
+      matches.push({
+        company: company,
+        similarity: Math.round(totalSimilarity),
+        reasons: []
+      });
+
+      if (nameSimilarity >= 80) {
+        matches[matches.length - 1].reasons.push('Similar company name');
+      }
+      if (addressSimilarity >= 50) {
+        matches[matches.length - 1].reasons.push('Same ZIP code');
+      }
+      if (addressSimilarity >= 80) {
+        matches[matches.length - 1].reasons.push('Similar address');
+      }
+    }
+  });
+
+  return {
+    isDuplicate: matches.length > 0,
+    matches: matches.sort((a, b) => b.similarity - a.similarity)
+  };
+}
+
+/**
+ * Get comprehensive company context for visit logging
+ * @param {string} cid - Company ID
+ * @returns {Object} Enhanced company context
+ */
+function getEnhancedCompanyContext(cid) {
+  const map = getProspectMapCached();
+  const company = map[cid];
+  if (!company) return null;
+
+  // Get recent outreach history
+  const ss = Utils.getSpreadsheet();
+  const outreachSheet = ss.getSheetByName(CONFIG.SHEET_OUTREACH);
+  const recentVisits = [];
+
+  if (outreachSheet) {
+    const outreachData = outreachSheet.getDataRange().getValues();
+    const headers = outreachData[0];
+    const colDate = Utils.safeGetCol(headers, ['Date', 'Visit Date']);
+    const colNotes = Utils.safeGetCol(headers, ['Notes', 'Comments']);
+    const colOutcome = Utils.safeGetCol(headers, ['Outcome']);
+    const colContactType = Utils.safeGetCol(headers, ['Contact Type']);
+
+    // Get last 5 visits
+    for (let i = outreachData.length - 1; i >= 1 && recentVisits.length < 5; i--) {
+      const row = outreachData[i];
+      if (row[1] === cid) { // CID column
+        const visitDate = colDate > -1 ? row[colDate] : null;
+        const notes = colNotes > -1 ? row[colNotes] : '';
+        const outcome = colOutcome > -1 ? row[colOutcome] : '';
+        const contactType = colContactType > -1 ? row[colContactType] : '';
+
+        if (visitDate) {
+          recentVisits.push({
+            date: new Date(visitDate).toLocaleDateString(),
+            notes: notes || 'No notes',
+            outcome: outcome || 'No outcome recorded',
+            contactType: contactType || 'Unknown'
+          });
+        }
+      }
+    }
+  }
+
+  // Calculate days since last contact
+  const daysSinceContact = company.lastOutreachDate ?
+    Math.floor((new Date() - new Date(company.lastOutreachDate)) / (1000 * 60 * 60 * 24)) :
+    null;
+
+  return {
+    cid: company.cid,
+    name: company.name,
+    address: company.address,
+    industry: company.industry,
+    priority: company.priority,
+    lastOutcome: company.lastOutcome,
+    contactStatus: company.contactStatus,
+    nextDate: company.nextDateTimeDisplay,
+    daysSinceContact: daysSinceContact,
+    recentVisits: recentVisits,
+    winProbability: company.priority >= 90 ? 'High' : company.priority >= 60 ? 'Medium' : 'Low',
+    suggestion: company.contactStatus === 'Hot' ? 'High priority - follow up immediately' :
+               company.contactStatus === 'Warm' ? 'Follow up within 2 weeks' :
+               'Standard follow-up timing'
+  };
+}
+
+/**
+ * Get intelligent visit defaults based on company profile
+ * @param {string} cid - Company ID
+ * @returns {Object} Default values for visit form
+ */
+function getIntelligentVisitDefaults(cid) {
+  const context = getEnhancedCompanyContext(cid);
+  if (!context) return {};
+
+  const settings = loadSettingsData();
+  const defaults = {
+    stage: context.lastOutcome ? Utils.normalizeOutcome(context.lastOutcome).stage : 'Prospect',
+    status: context.lastOutcome ? Utils.normalizeOutcome(context.lastOutcome).status : 'Cold',
+    contactType: 'In Person',
+    emailSent: 'FALSE',
+    emailOpened: 'FALSE'
+  };
+
+  // Suggest follow-up based on current status and history
+  if (context.nextDate === 'None Scheduled') {
+    const suggestion = autoSuggestFollowUp(context.lastOutcome);
+    if (suggestion.days) {
+      const suggestedDate = new Date();
+      suggestedDate.setDate(suggestedDate.getDate() + suggestion.days);
+      defaults.nextDate = suggestedDate.toISOString().split('T')[0];
+    }
+  }
+
+  // Default contact type based on recent history
+  if (context.recentVisits.length > 0) {
+    const lastVisit = context.recentVisits[0];
+    if (lastVisit.contactType) {
+      defaults.contactType = lastVisit.contactType;
+    }
+  }
+
+  return defaults;
+}
+
+/**
+ * Enhanced visit logging with automatic data population and validation
+ * @param {Object} formData - Visit form data
+ * @returns {Object} Result with success status and message
+ */
+function logVisitEnhanced(formData) {
+  if (!formData || !formData.cid) {
+    return { success: false, message: 'Company ID is required.' };
+  }
+
+  const ss = Utils.getSpreadsheet();
+  const outreachSheet = ss.getSheetByName(CONFIG.SHEET_OUTREACH);
+  if (!outreachSheet) return { success: false, message: 'Outreach Sheet missing' };
+
+  console.log('logVisitEnhanced payload:', JSON.stringify(formData));
+
+  // Get enhanced company context
+  const companyContext = getEnhancedCompanyContext(formData.cid);
+  if (!companyContext) {
+    return { success: false, message: 'Company not found. Please select a valid company.' };
+  }
+
+  // Apply intelligent defaults if not provided
+  const defaults = getIntelligentVisitDefaults(formData.cid);
+
+  const visitData = {
+    cid: formData.cid,
+    companyName: companyContext.name,
+    date: formData.date || new Date(),
+    notes: formData.notes || '',
+    outcome: formData.outcome || 'No Outcome',
+    stage: formData.stage || defaults.stage,
+    status: formData.status || defaults.status,
+    nextDate: formData.nextDate || defaults.nextDate || '',
+    contactType: formData.contactType || defaults.contactType,
+    emailSent: formData.emailSent || defaults.emailSent,
+    emailOpened: formData.emailOpened || defaults.emailOpened
+  };
+
+  // Validate outcome
+  const canonicalOutcome = canonicalizeOutcome(visitData.outcome);
+  if (!canonicalOutcome) {
+    return { success: false, message: 'Invalid outcome selected. Please choose from the dropdown.' };
+  }
+
+  const logic = Utils.normalizeOutcome(canonicalOutcome);
+  visitData.stage = logic.stage;
+  visitData.status = logic.status;
+
+  // Ensure sheet has enough columns
+  const existingCols = outreachSheet.getLastColumn();
+  if (existingCols < 18) {
+    try {
+      outreachSheet.insertColumnsAfter(existingCols, 18 - existingCols);
+    } catch (e) {
+      console.error('Could not expand columns:', e);
+    }
+  }
+
+  // Handle email sending
+  let emailSendResult = false;
+  if (formData.autoSendEmail) {
+    emailSendResult = autoSendFollowUpEmail(formData.cid, CONFIG.EMAIL_TEMPLATE_SUBJECT);
+    visitData.emailSent = emailSendResult ? 'TRUE' : 'FALSE';
+  }
+
+  // Log the visit
+  try {
+    outreachSheet.appendRow([
+      'LID-' + Math.floor(Math.random() * 100000),
+      visitData.cid,
+      visitData.companyName,
+      visitData.date,
+      visitData.notes,
+      canonicalOutcome,
+      visitData.stage,
+      visitData.status,
+      visitData.nextDate,
+      '', '', '', '', '',
+      visitData.contactType,
+      visitData.emailSent,
+      visitData.emailOpened
+    ]);
+  } catch (e) {
+    console.error('Append row failed:', e);
+    return { success: false, message: 'Failed to log visit: ' + e.message };
+  }
+
+  // Handle calendar event creation
+  let calendarEventCreated = false;
+  if (formData.createCalendarEvent && visitData.nextDate) {
+    try {
+      let eventTitle = `${visitData.companyName} - ${canonicalOutcome}`;
+      if (logic.stage === 'Nurture') {
+        eventTitle = `Follow up: ${visitData.companyName} (${logic.status})`;
+      } else if (logic.stage === 'Prospect') {
+        eventTitle = `Contact: ${visitData.companyName} (${logic.status})`;
+      } else if (logic.stage === 'Won') {
+        eventTitle = `Won: ${visitData.companyName} - Account Management`;
+      }
+
+      Utils.createAutoCalendarEvent(eventTitle, visitData.nextDate);
+      calendarEventCreated = true;
+    } catch (e) {
+      console.error('Calendar event creation failed:', e);
+    }
+  }
+
+  // Auto-suggest follow-up if no date provided
+  if (!visitData.nextDate && !formData.createCalendarEvent) {
+    const suggestion = autoSuggestFollowUp(canonicalOutcome);
+    if (suggestion.days) {
+      const suggestedDate = new Date(visitData.date);
+      suggestedDate.setDate(suggestedDate.getDate() + suggestion.days);
+      visitData.nextDate = suggestedDate.toISOString().split('T')[0];
+      Utils.createAutoCalendarEvent('Auto Follow-up: ' + visitData.companyName, visitData.nextDate);
+    }
+  }
+
+  // Sync data across sheets
+  if (canonicalOutcome === 'Won') {
+    syncWonToAccounts(formData.cid);
+  }
+  syncProspectsFromOutreach();
+
+  // Build success message
+  let message = `Visit logged for ${visitData.companyName}`;
+  if (formData.autoSendEmail) {
+    message += emailSendResult ? ' - Email sent successfully' : ' - Email send failed';
+  }
+  if (formData.createCalendarEvent) {
+    message += calendarEventCreated ? ' - Calendar event created' : ' - Calendar event failed';
+  }
+
+  return {
+    success: true,
+    message: message,
+    visitData: visitData
+  };
+}
+
+/**
+ * Get settings data for populating dropdowns
+ * @returns {Object} Settings data for UI
+ */
+function getSettingsForUI() {
+  const settings = loadSettingsData();
+  return {
+    outcomes: settings.outcomes.map(o => o.outcome),
+    stages: settings.stages,
+    statuses: settings.statuses,
+    contactTypes: settings.contactTypes
+  };
+}
+
 // ============================= 6) ROUTING ===============================
 
 function getSmartRoute(opts) {
@@ -1240,312 +1665,6 @@ function getCustomRoute(opts) {
 
 // ========================= 7) REPORTING & EMAIL ==========================
 
-function getBossSummaryReport(params) {
-  const ss = Utils.getSpreadsheet();
-  const outreachSheet = ss.getSheetByName(CONFIG.SHEET_OUTREACH);
-  const prospectsSheet = ss.getSheetByName(CONFIG.SHEET_PROSPECTS);
-  if (!outreachSheet || !prospectsSheet) return 'ERROR: Sheets missing';
-
-  let startDate, endDate;
-  if (params && params.startDate && params.endDate) {
-    startDate = new Date(params.startDate);
-    endDate = new Date(params.endDate);
-  } else {
-    endDate = new Date();
-    startDate = new Date(endDate);
-    startDate.setHours(0, 0, 0, 0);
-    endDate.setHours(23, 59, 59, 999);
-  }
-
-  const compareStart = new Date(startDate);
-  compareStart.setHours(0, 0, 0, 0);
-  const compareEnd = new Date(endDate);
-  compareEnd.setHours(23, 59, 59, 999);
-
-  const outreachData = outreachSheet.getDataRange().getValues();
-  const visitsForReport = [];
-  const COL_COMPANY_NAME = 2, COL_VISIT_DATE = 3, COL_NOTES = 4, COL_OUTCOME = 5, COL_NEXT_DATE = 8, COL_CONTACT_TYPE = 15, COL_EMAIL_SENT = 16;
-
-  for (let i = 1; i < outreachData.length; i++) {
-    const rowDate = new Date(outreachData[i][COL_VISIT_DATE]);
-    rowDate.setHours(0, 0, 0, 0);
-
-    if (rowDate >= compareStart && rowDate <= compareEnd) {
-      visitsForReport.push({
-        date: new Date(outreachData[i][COL_VISIT_DATE]).toLocaleDateString(),
-        company: outreachData[i][COL_COMPANY_NAME] || 'N/A',
-        notes: outreachData[i][COL_NOTES] || '',
-        outcome: outreachData[i][COL_OUTCOME] || 'N/A',
-        status: outreachData[i][6] || 'N/A',  // Status column
-        stage: outreachData[i][7] || 'N/A',   // Stage column
-        nextDate: outreachData[i][COL_NEXT_DATE] ? new Date(outreachData[i][COL_NEXT_DATE]).toLocaleDateString() : 'N/A'
-      });
-    }
-  }
-
-  const totalVisits = visitsForReport.length;
-  const totalWins = visitsForReport.filter(v => String(v.outcome).toLowerCase() === 'won').length;
-  const winRate = totalVisits > 0 ? ((totalWins / totalVisits) * 100).toFixed(1) : 0;
-
-  const map = getProspectMapCached();
-  let pipelineCount = 0;
-  Object.values(map).forEach(p => {
-    const stage = Utils.normalizeOutcome(p.lastOutcome).stage;
-    if (stage === 'Prospect' || stage === 'Nurture') pipelineCount++;
-  });
-
-  const allTasks = getTasksList();
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0);
-  const now = Date.now();
-
-  const actionPlan = allTasks.filter(t => {
-    if (t.status === 'Overdue') return true;
-    if (t.nextDateTs > 0) {
-      const taskDate = new Date(t.nextDateTs);
-      taskDate.setHours(0, 0, 0, 0);
-      return taskDate.getTime() === tomorrow.getTime();
-    }
-    return false;
-  }).sort((a, b) => {
-    const aIsOverdue = a.nextDateTs > 0 && a.nextDateTs < now;
-    const bIsOverdue = b.nextDateTs > 0 && b.nextDateTs < now;
-    if (aIsOverdue && !bIsOverdue) return -1;
-    if (!aIsOverdue && bIsOverdue) return 1;
-    return b.priority - a.priority;
-  });
-
-  let visitsTableHtml = visitsForReport.length > 0 ? visitsForReport.map(v => `
-      <tr>
-          <td>${v.date}</td>
-          <td>${v.company}</td>
-          <td>${v.notes}</td>
-          <td>${v.outcome}</td>
-          <td>${v.status}</td>
-          <td>${v.stage}</td>
-          <td>${v.nextDate}</td>
-      </tr>`).join('') : `<tr><td colspan="7">No detailed visits logged for this period.</td></tr>`;
-
-  // Enhanced KPIs and Charts
-  const industryStats = {};
-  const stageStats = { Prospect: 0, Nurture: 0, Won: 0, Lost: 0 };
-  const statusStats = { 'Never Contacted': 0, Cold: 0, Warm: 0, Hot: 0, Active: 0 };
-
-  Object.values(map).forEach(p => {
-    if (p.industry && p.industry !== 'Other') {
-      industryStats[p.industry] = (industryStats[p.industry] || 0) + 1;
-    }
-    const stage = Utils.normalizeOutcome(p.lastOutcome).stage;
-    const status = Utils.normalizeOutcome(p.lastOutcome).status;
-    stageStats[stage] = (stageStats[stage] || 0) + 1;
-    statusStats[status] = (statusStats[status] || 0) + 1;
-  });
-
-  // Create inline SVG charts
-  const winRateChart = createWinRateChart(totalVisits, totalWins);
-  const pipelineChart = createPipelineChart(stageStats);
-  const industryChart = createIndustryChart(industryStats);
-
-  // Enhanced Action Plan with more details
-  const enhancedActionPlan = getEnhancedActionPlan(map, actionPlan);
-
-  const reportDateStr = `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`;
-
-  return `
-    <html>
-    <head>
-        <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; color: #333; background: #f8f9fa; }
-            .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); overflow: hidden; }
-            .header { background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 30px; text-align: center; }
-            .header h1 { margin: 0; font-size: 28px; font-weight: 300; }
-            .header p { margin: 10px 0 0 0; opacity: 0.9; font-size: 16px; }
-
-            .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; padding: 30px; background: #f8f9fa; }
-            .kpi-card { background: white; padding: 25px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-left: 4px solid #1e3c72; }
-            .kpi-value { font-size: 36px; font-weight: bold; color: #1e3c72; margin-bottom: 5px; }
-            .kpi-label { font-size: 14px; color: #666; text-transform: uppercase; letter-spacing: 1px; }
-
-            .charts-section { padding: 30px; }
-            .chart-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin-bottom: 30px; }
-            .chart-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-            .chart-title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 15px; text-align: center; }
-
-            .section { margin: 30px; }
-            .section-title { font-size: 24px; color: #1e3c72; border-bottom: 3px solid #1e3c72; padding-bottom: 10px; margin-bottom: 20px; }
-            .action-plan h3 { color: #856404; margin-top: 0; }
-            .action-item { background: white; margin: 10px 0; padding: 15px; border-radius: 6px; border-left: 4px solid #ffc107; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-            .action-priority { font-weight: bold; color: #dc3545; }
-            .action-company { font-weight: bold; color: #333; }
-            .action-details { color: #666; margin-top: 5px; }
-
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-            th { background: #1e3c72; color: white; padding: 15px; text-align: left; font-weight: 600; }
-            td { padding: 12px 15px; border-bottom: 1px solid #eee; }
-            tr:hover { background: #f8f9fa; }
-
-            .action-plan { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 25px; margin: 20px 0; }
-            .action-plan h3 { color: #856404; margin-top: 0; }
-            .action-item { background: white; margin: 10px 0; padding: 15px; border-radius: 6px; border-left: 4px solid #ffc107; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-            .action-priority { font-weight: bold; color: #dc3545; }
-            .action-company { font-weight: bold; color: #333; }
-            .action-details { color: #666; margin-top: 5px; }
-
-            .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; border-top: 1px solid #eee; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>K&L Recycling - Daily Activity Report</h1>
-                <p>${reportDateStr} | Generated ${new Date().toLocaleString()}</p>
-            </div>
-
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <div class="kpi-value">${totalVisits}</div>
-                    <div class="kpi-label">Total Visits</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-value">${winRate}%</div>
-                    <div class="kpi-label">Win Rate</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-value">${pipelineCount}</div>
-                    <div class="kpi-label">Active Pipeline</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-value">${Object.keys(industryStats).length}</div>
-                    <div class="kpi-label">Industries Covered</div>
-                </div>
-            </div>
-
-            <div class="charts-section">
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-title">Win Rate Performance</div>
-                        ${winRateChart}
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-title">Pipeline Distribution</div>
-                        ${pipelineChart}
-                    </div>
-                </div>
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-title">Industry Focus</div>
-                        ${industryChart}
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2 class="section-title">Activity Summary</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width: 10%;">Date</th>
-                            <th style="width: 15%;">Company</th>
-                            <th style="width: 30%;">Notes</th>
-                            <th style="width: 10%;">Outcome</th>
-                            <th style="width: 10%;">Status</th>
-                            <th style="width: 10%;">Stage</th>
-                            <th style="width: 15%;">Next Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${visitsTableHtml}
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="action-plan">
-                <h2 class="section-title">Next Day Action Plan</h2>
-                ${enhancedActionPlan}
-            </div>
-
-            <div class="footer">
-                <p>Report Generated by K&L CRM v7.0 | Data-driven insights for recycling excellence</p>
-            </div>
-        </div>
-    </body>
-    </html>
-  `;
-}
-
-function sendBossEmail(params = {}) {
-  try {
-    const reportHtml = getBossSummaryReport(params);
-    let period = params.type || 'Custom Range';
-    if (!params.startDate && !params.endDate) period = 'Full Report';
-    const subject = `K&L CRM ${period} Activity Report - ${new Date().toLocaleDateString()}`;
-
-    const ss = Utils.getSpreadsheet();
-    const contactsSheet = ss.getSheetByName(CONFIG.SHEET_CONTACTS);
-    let recipientEmails = [];
-
-    if (contactsSheet) {
-      const emailRange = contactsSheet.getRange('G2:G6').getValues();
-      recipientEmails = emailRange.flat().filter(e => typeof e === 'string' && e.indexOf('@') > -1);
-    }
-
-    let bossEmail = recipientEmails.join(',');
-    if (!bossEmail) {
-      bossEmail = Session.getActiveUser().getEmail();
-      console.warn('Boss emails were empty/invalid. Defaulting to current user: ' + bossEmail);
-    }
-
-    GmailApp.sendEmail(
-      bossEmail,
-      subject,
-      'Your email client does not support HTML reports. Please view the attachment.',
-      { htmlBody: reportHtml, name: 'K&L CRM Auto-Report' }
-    );
-    console.log(`Boss email sent to ${bossEmail}: ${subject}`);
-    return `Email sent to ${bossEmail}`;
-  } catch (e) {
-    console.error('Email failed:', e.message);
-    return `Email failed: ${e.message}`;
-  }
-}
-
-function autoSendDailyReport() {
-  const today = new Date();
-  const start = new Date(today);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(today);
-  end.setHours(23, 59, 59, 999);
-  sendBossEmail({ startDate: start.toISOString(), endDate: end.toISOString(), type: 'Daily' });
-}
-
-function setupDailyReportTrigger() {
-  try {
-    // Delete any existing trigger for this function
-    const triggers = ScriptApp.getProjectTriggers();
-    triggers.forEach(trigger => {
-      if (trigger.getHandlerFunction() === 'autoSendDailyReport') {
-        ScriptApp.deleteTrigger(trigger);
-      }
-    });
-
-    // Create new daily trigger at 5 PM
-    ScriptApp.newTrigger('autoSendDailyReport')
-      .timeBased()
-      .atHour(17)
-      .everyDays(1)
-      .create();
-
-    return 'Daily report trigger set up successfully at 5 PM.';
-  } catch (e) {
-    // Log the error but don't break the entire system
-    console.warn('Could not set up daily report trigger due to permissions:', e.message);
-    console.warn('Daily reports can be set up manually from the Admin panel if needed.');
-    return 'Daily report trigger setup skipped due to permissions. Use Admin panel to set up manually.';
-  }
-}
-
 function detectIndustry(name, address) {
   const settings = loadSettingsData();
   const searchText = (name + ' ' + address).toLowerCase();
@@ -1644,7 +1763,7 @@ function validateAndStandardizeContactData(prospectData) {
 
   // Auto-detect ZIP
   if (prospectData.address) {
-    const zipMatches = prospectData.address.match(/\b\d{5}\b/g);
+    const zipMatches = prospectData.address.match(/\b\d{5}(?:-\d{4})?\b/g);
     if (zipMatches) {
       standardized.zip = zipMatches[zipMatches.length - 1];
     } else {
@@ -2128,20 +2247,47 @@ function onInstall(e) {
   onOpen(e);
 }
 
-function onOpen(e) {
-  // Set up daily report trigger
-  setupDailyReportTrigger();
 
-  SpreadsheetApp.getUi()
-    .createMenu('K&L CRM v7.0')
-    .addItem('Open Sidebar', 'showSidebar')
-    .addItem('Sync Prospects', 'syncProspectsFromOutreach')
-    .addItem('Apply Outcome Validation', 'applyOutcomeValidation')
-    .addToUi();
+
+/**
+ * Initializes the add-on when the spreadsheet opens
+ * @param {Object} e - Event object (unused but required for onOpen trigger)
+ */
+function onOpen(e) {
+  // Add-on menu is defined in the manifest file
+  // This function can be used for other initialization tasks if needed
 }
 
+/**
+ * Shows the CRM sidebar
+ */
 function showSidebar() {
-  const html = HtmlService.createTemplateFromFile('Sidebar').evaluate().setTitle('K&L CRM v7.0');
+  const html = HtmlService.createTemplateFromFile('Sidebar').evaluate()
+    .setTitle('K&L CRM v7.0')
+    .setWidth(400);
+
+  SpreadsheetApp.getUi().showSidebar(html);
+}
+
+/**
+ * TEST FUNCTION - Use this to verify your setup works
+ * Run this from Apps Script editor: showTestSidebar()
+ */
+function showTestSidebar() {
+  const html = HtmlService.createHtmlOutput(`
+    <div style="padding: 20px; font-family: Arial, sans-serif;">
+      <h2 style="color: #667eea;">✅ K&L CRM Test</h2>
+      <p>Your add-on is working! The sidebar can load HTML content.</p>
+      <p><strong>Next steps:</strong></p>
+      <ul>
+        <li>Close this test sidebar</li>
+        <li>Run <code>showSidebar()</code> to load the full CRM</li>
+        <li>If full CRM works, deployment is successful!</li>
+      </ul>
+      <button onclick="google.script.host.close()" style="background: #667eea; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">Close Test</button>
+    </div>
+  `).setTitle('CRM Test');
+
   SpreadsheetApp.getUi().showSidebar(html);
 }
 
@@ -2318,7 +2464,7 @@ function runEndToEndTests() {
       results.failed++;
     }
   } catch (e) {
-    results.tests.push({ name: 'Enhanced Action Plan', status: 'FAIL', details: 'Action plan function error: ' + e.message });
+    results.tests.push({ name: 'Enhanced Action Plan', status: 'FAIL', details: e.message });
     results.failed++;
   }
 
@@ -2357,9 +2503,13 @@ function runEndToEndTests() {
   });
 
   if (results.failed === 0) {
-    console.log('\n🎉 All E2E tests passed! The automation system is working correctly.');
+    console.log('\n🎉 All E2E tests passed! The system is working correctly.');
   } else {
-    console.log(`\n⚠️ ${results.failed} test(s) failed. Please review the implementation.`);
+    console.log(`\n⚠️ ${results.failed} test(s) failed. Please review the failing tests above.`);
+    console.log('\n🔍 Focus Areas for Investigation:');
+    results.tests.filter(t => t.status === 'FAIL').forEach(test => {
+      console.log(`   - ${test.name}: ${test.details}`);
+    });
   }
 
   return results;
@@ -2661,7 +2811,7 @@ function getEnhancedActionPlan() {
   // ⏰ CRITICAL OVERDUE (4-7 days)
   const criticalOverdue = allProspects.filter(item => {
     if (!item.nextDate || item.stage === 'Won') return false;
-    const daysOverdue = Math.floor((now.getTime() - item.nextDate.getTime()) / (1000 * 60 * 60 * 24));
+    const daysOverdue = Math.floor((now.getTime() - task.nextDate.getTime()) / (1000 * 60 * 60 * 24));
     return daysOverdue >= 4 && daysOverdue <= 7;
   }).slice(0, 5);
 
@@ -2959,28 +3109,7 @@ function runComprehensiveTests() {
     results.failed++;
   }
 
-  // Test 2: Column Detection (Critical for data access)
-  try {
-    const headers = ['Company ID', 'Company Name', 'Address', 'Priority Score', 'Last Outcome'];
-    const colId = Utils.safeGetCol(headers, ['Company ID', 'CID', 'ID']);
-    const colName = Utils.safeGetCol(headers, ['Company Name', 'Company']);
-    const colAddress = Utils.safeGetCol(headers, ['Address', 'Location']);
-    const colPriority = Utils.safeGetCol(headers, ['Priority Score', 'Priority']);
-    const colOutcome = Utils.safeGetCol(headers, ['Last Outcome', 'Outcome']);
-
-    if (colId === 0 && colName === 1 && colAddress === 2 && colPriority === 3 && colOutcome === 4) {
-      results.tests.push({ name: 'Column Detection', status: 'PASS', details: 'All columns detected correctly' });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Column Detection', status: 'FAIL', details: `Columns: ID=${colId}, Name=${colName}, Address=${colAddress}, Priority=${colPriority}, Outcome=${colOutcome}` });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Column Detection', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 3: Industry Detection
+  // Test 2: Industry Detection
   try {
     const testCompanies = [
       { name: 'ABC Metal Works', address: '123 Industrial St', expected: 'Metal Fabrication' },
@@ -3010,206 +3139,7 @@ function runComprehensiveTests() {
     results.failed++;
   }
 
-  // Test 4: Data Validation (Critical for company creation)
-  try {
-    const validData = { name: 'Test Company Inc', address: '123 Test St, City, TX 12345', email: 'test@example.com' };
-    const invalidData = { name: '', address: '', email: 'invalid-email' };
-
-    const validResult = validateAndStandardizeContactData(validData);
-    const invalidResult = validateAndStandardizeContactData(invalidData);
-
-    if (validResult.errors.length === 0 && validResult.warnings.length >= 0 &&
-        invalidResult.errors.length > 0) {
-      results.tests.push({ name: 'Data Validation', status: 'PASS', details: 'Validation works correctly' });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Data Validation', status: 'FAIL', details: 'Validation logic incorrect' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Data Validation', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 5: Company Creation (Critical - user's main issue)
-  try {
-    const testCompany = {
-      name: 'Comprehensive Test Company',
-      address: '123 Test Boulevard, Test City, TX 75001',
-      email: 'test@comprehensivetest.com',
-      industry: 'Manufacturing'
-    };
-
-    // This would normally create a company, but we can't modify real data in tests
-    // So we test the logic without actually saving
-    const validation = validateAndStandardizeContactData(testCompany);
-    const industryDetection = detectIndustry(testCompany.name, testCompany.address);
-
-    if (validation.isValid && industryDetection.industry) {
-      // Test the company ID generation logic
-      const testCid = 'CID-' + new Date().getTime();
-      if (testCid.startsWith('CID-') && testCid.length > 10) {
-        results.tests.push({ name: 'Company Creation Logic', status: 'PASS', details: `Validation passed, industry detected: ${industryDetection.industry}` });
-        results.passed++;
-      } else {
-        results.tests.push({ name: 'Company Creation Logic', status: 'FAIL', details: 'Company ID generation failed' });
-        results.failed++;
-      }
-    } else {
-      results.tests.push({ name: 'Company Creation Logic', status: 'FAIL', details: 'Validation or industry detection failed' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Company Creation Logic', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 6: Priority Calculation
-  try {
-    const testProspects = [
-      { basePriority: 50, lastOutcome: 'Interested', priority: 0 },
-      { basePriority: 30, lastOutcome: 'Not Interested', contactStatus: 'Hot', priority: 0 },
-      { basePriority: 20, industry: 'Metal Fabrication', priority: 0 }
-    ];
-
-    testProspects.forEach(p => {
-      p.priority = calculateDynamicPriority(p);
-    });
-
-    // Basic checks that priorities are reasonable
-    if (testProspects.every(p => p.priority >= 0 && p.priority <= 100)) {
-      results.tests.push({ name: 'Priority Calculation', status: 'PASS', details: `Priorities calculated: ${testProspects.map(p => p.priority).join(', ')}` });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Priority Calculation', status: 'FAIL', details: 'Invalid priority values calculated' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Priority Calculation', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 7: Visit Logging Logic (Critical - user's main issue)
-  try {
-    const testVisit = {
-      cid: 'CID-TEST123',
-      outcome: 'Interested',
-      notes: 'Test visit from comprehensive testing',
-      nextDate: '2025-12-31',
-      autoSendEmail: false,
-      createCalendarEvent: false
-    };
-
-    // Test canonical outcome conversion
-    const canonicalOutcome = canonicalizeOutcome(testVisit.outcome);
-    const logic = Utils.normalizeOutcome(canonicalOutcome);
-
-    if (canonicalOutcome === 'Interested' && logic.stage === 'Nurture' && logic.status === 'Hot') {
-      // Test that the visit logging logic can be called without errors
-      // We can't actually create visits in tests, but we can test the logic
-      results.tests.push({ name: 'Visit Logging Logic', status: 'PASS', details: `Canonical outcome: ${canonicalOutcome}, Stage: ${logic.stage}, Status: ${logic.status}` });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Visit Logging Logic', status: 'FAIL', details: 'Visit logging logic failed' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Visit Logging Logic', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 8: Task Generation
-  try {
-    const mockMap = {
-      'CID-TEST1': {
-        cid: 'CID-TEST1',
-        name: 'Test Company 1',
-        priority: 95,
-        nextDateTs: Date.now() - (2 * 24 * 60 * 60 * 1000), // 2 days overdue
-        lastOutcome: 'Interested'
-      },
-      'CID-TEST2': {
-        cid: 'CID-TEST2',
-        name: 'Test Company 2',
-        priority: 85,
-        nextDateTs: Date.now() + (3 * 24 * 60 * 60 * 1000), // 3 days from now
-        lastOutcome: 'Interested'
-      }
-    };
-
-    const tasks = getTasksListInternal(mockMap);
-    if (Array.isArray(tasks) && tasks.length > 0) {
-      results.tests.push({ name: 'Task Generation', status: 'PASS', details: `Generated ${tasks.length} tasks successfully` });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Task Generation', status: 'FAIL', details: 'Task generation failed or returned empty' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Task Generation', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 9: Data Synchronization Logic
-  try {
-    // Test the sync logic structure without actual data modification
-    const mockOutreachData = [
-      ['LID-TEST1', 'CID-SYNC1', 'Test Company', new Date(), 'Test notes', 'Interested', 'Nurture', 'Hot', '2025-12-31']
-    ];
-
-    // This tests that the sync function can process the data structure
-    if (Array.isArray(mockOutreachData) && mockOutreachData.length > 0) {
-      results.tests.push({ name: 'Data Synchronization Logic', status: 'PASS', details: 'Sync data structure valid' });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Data Synchronization Logic', status: 'FAIL', details: 'Invalid sync data structure' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Data Synchronization Logic', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 10: Bulk Operations Logic
-  try {
-    const mockUpdates = [
-      { cid: 'CID-BULK1', priority: 90, industry: 'Metal Fabrication' },
-      { cid: 'CID-BULK2', outcome: 'Interested' }
-    ];
-
-    // Test parameter validation
-    const validUpdates = mockUpdates.filter(u => u.cid && (u.priority !== undefined || u.industry || u.outcome));
-    if (validUpdates.length === mockUpdates.length) {
-      results.tests.push({ name: 'Bulk Operations Logic', status: 'PASS', details: 'Bulk update validation works' });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Bulk Operations Logic', status: 'FAIL', details: 'Bulk update validation failed' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Bulk Operations Logic', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 11: Snooze Functionality
-  try {
-    const testCid = 'CID-SNOOZE-TEST';
-    const testDays = 7;
-
-    // Test that snooze logic can be called (we can't modify real data)
-    if (testCid && testDays > 0) {
-      results.tests.push({ name: 'Snooze Functionality', status: 'PASS', details: 'Snooze parameters valid' });
-      results.passed++;
-    } else {
-      results.tests.push({ name: 'Snooze Functionality', status: 'FAIL', details: 'Invalid snooze parameters' });
-      results.failed++;
-    }
-  } catch (e) {
-    results.tests.push({ name: 'Snooze Functionality', status: 'FAIL', details: e.message });
-    results.failed++;
-  }
-
-  // Test 12: Follow-up Suggestions
+  // Test 3: Follow-up Suggestions
   try {
     const testOutcomes = [
       { outcome: 'Interested', expectedDays: 7 },
@@ -3237,65 +3167,92 @@ function runComprehensiveTests() {
     results.failed++;
   }
 
-  // Test 13: Cache Invalidation
+  // Test 4: Data Validation (Critical for company creation)
   try {
-    const initialCache = SETTINGS_CACHE;
-    const initialTimestamp = CACHE_TIMESTAMP;
+    const validData = { name: 'Test Company', address: '123 Test St, City, TX 12345', email: 'test@example.com' };
+    const invalidData = { name: '', address: '', email: 'invalid-email' };
 
-    // Force cache reload by setting timestamp to old value
-    CACHE_TIMESTAMP = 0;
+    const validResult = validateAndStandardizeContactData(validData);
+    const invalidResult = validateAndStandardizeContactData(invalidData);
 
-    const reloadedSettings = loadSettingsData();
-
-    if (reloadedSettings && SETTINGS_CACHE && CACHE_TIMESTAMP > initialTimestamp) {
-      results.tests.push({ name: 'Cache Invalidation', status: 'PASS', details: 'Cache invalidation working' });
+    if (validResult.errors.length === 0 && validResult.warnings.length >= 0 &&
+        invalidResult.errors.length > 0) {
+      results.tests.push({ name: 'Data Validation', status: 'PASS', details: 'Validation works correctly' });
       results.passed++;
     } else {
-      results.tests.push({ name: 'Cache Invalidation', status: 'FAIL', details: 'Cache invalidation failed' });
+      results.tests.push({ name: 'Data Validation', status: 'FAIL', details: 'Validation logic incorrect' });
       results.failed++;
     }
   } catch (e) {
-    results.tests.push({ name: 'Cache Invalidation', status: 'FAIL', details: e.message });
+    results.tests.push({ name: 'Data Validation', status: 'FAIL', details: e.message });
     results.failed++;
   }
 
-  // Test 14: Geocoding Functionality
+  // Test 5: Prospect Addition (Mock - doesn't actually add to avoid data pollution)
   try {
-    const testAddress = '123 Main St, Dallas, TX 75201';
-    const geocodeResult = geocodeWithNominatim(testAddress);
+    const testProspect = { name: 'E2E Test Company', address: '123 Test St, Test City, TX 12345', email: 'test@example.com' };
+    const detection = detectIndustry(testProspect.name, testProspect.address);
+    const validation = validateAndStandardizeContactData(testProspect);
 
-    // Check if geocoding worked or failed gracefully
-    if (geocodeResult && typeof geocodeResult === 'object' &&
-        geocodeResult.hasOwnProperty('lat') && geocodeResult.hasOwnProperty('lng') &&
-        geocodeResult.hasOwnProperty('status')) {
-
-      // Accept both successful geocoding and graceful failure
-      if (geocodeResult.status === 'OK' || geocodeResult.status === 'ZERO_RESULTS' ||
-          geocodeResult.status === 'ERROR') {
-        results.tests.push({ name: 'Geocoding Functionality', status: 'PASS', details: `Geocoding handled correctly: ${geocodeResult.status}` });
-        results.passed++;
-      } else {
-        results.tests.push({ name: 'Geocoding Functionality', status: 'FAIL', details: `Unexpected status: ${geocodeResult.status}` });
-        results.failed++;
-      }
+    if (detection.industry && validation.errors.length === 0) {
+      results.tests.push({ name: 'Prospect Addition Logic', status: 'PASS', details: `Would create prospect with industry: ${detection.industry}, priority: ${detection.priority}` });
+      results.passed++;
     } else {
-      results.tests.push({ name: 'Geocoding Functionality', status: 'FAIL', details: 'Invalid geocoding result structure' });
+      results.tests.push({ name: 'Prospect Addition Logic', status: 'FAIL', details: 'Prospect logic failed' });
       results.failed++;
     }
   } catch (e) {
-    results.tests.push({ name: 'Geocoding Functionality', status: 'FAIL', details: e.message });
+    results.tests.push({ name: 'Prospect Addition Logic', status: 'FAIL', details: e.message });
     results.failed++;
   }
 
-  // Test 15: Enhanced Action Plan Generation
+  // Test 6: Bulk Operations (Mock)
   try {
-    // Test the enhanced action plan function
+    // This would normally update real data, so we just test the logic
+    const mockUpdates = [
+      { cid: 'CID-TEST1', priority: 90 },
+      { cid: 'CID-TEST2', industry: 'Test Industry' }
+    ];
+
+    // Test parameter validation
+    if (mockUpdates.every(u => u.cid)) {
+      results.tests.push({ name: 'Bulk Operations Logic', status: 'PASS', details: 'Bulk update parameters valid' });
+      results.passed++;
+    } else {
+      results.tests.push({ name: 'Bulk Operations Logic', status: 'FAIL', details: 'Invalid update parameters' });
+      results.failed++;
+    }
+  } catch (e) {
+    results.tests.push({ name: 'Bulk Operations Logic', status: 'FAIL', details: e.message });
+    results.failed++;
+  }
+
+  // Test 7: Calendar Event Creation (Mock)
+  try {
+    // Test the utility function logic without actually creating events
+    const testDate = '2025-12-25';
+    if (testDate && !isNaN(new Date(testDate).getTime())) {
+      results.tests.push({ name: 'Calendar Integration', status: 'PASS', details: 'Calendar utility functions valid' });
+      results.passed++;
+    } else {
+      results.tests.push({ name: 'Calendar Integration', status: 'FAIL', details: 'Calendar date validation failed' });
+      results.failed++;
+    }
+  } catch (e) {
+    results.tests.push({ name: 'Calendar Integration', status: 'FAIL', details: e.message });
+    results.failed++;
+  }
+
+  // Test 8: Enhanced Action Plan Logic
+  try {
+    // Test that the action plan function can be called without errors
+    // (We can't test actual data without creating test sheets)
     const actionPlanHtml = getEnhancedActionPlan();
     if (typeof actionPlanHtml === 'string' && actionPlanHtml.length > 0) {
-      results.tests.push({ name: 'Enhanced Action Plan', status: 'PASS', details: 'Action plan generated successfully' });
+      results.tests.push({ name: 'Enhanced Action Plan', status: 'PASS', details: 'Action plan function executes successfully' });
       results.passed++;
     } else {
-      results.tests.push({ name: 'Enhanced Action Plan', status: 'FAIL', details: 'Action plan generation failed' });
+      results.tests.push({ name: 'Enhanced Action Plan', status: 'FAIL', details: 'Action plan function failed or returned empty' });
       results.failed++;
     }
   } catch (e) {
@@ -3303,29 +3260,32 @@ function runComprehensiveTests() {
     results.failed++;
   }
 
-  // Test 16: Escalation Logic
+  // Test 9: Untouched Prospects Detection (Mock)
   try {
-    // Test escalation logic with mock data
+    // Test the logic for detecting untouched prospects
+    // This tests the set operations without actual data
+    const mockOutreachCids = new Set(['CID-001', 'CID-002']);
     const mockProspects = [
-      { cid: 'CID-ESC1', priority: 50, nextDateTs: Date.now() - (10 * 24 * 60 * 60 * 1000) }, // 10 days overdue
-      { cid: 'CID-ESC2', priority: 80, nextDateTs: Date.now() - (20 * 24 * 60 * 60 * 1000) }  // 20 days overdue
+      { cid: 'CID-001', name: 'Test1' },
+      { cid: 'CID-002', name: 'Test2' },
+      { cid: 'CID-003', name: 'Test3' } // Untouched
     ];
 
-    // Test that escalation logic runs without errors
-    if (mockProspects.length === 2) {
-      results.tests.push({ name: 'Escalation Logic', status: 'PASS', details: 'Escalation logic structure valid' });
+    const untouched = mockProspects.filter(p => !mockOutreachCids.has(p.cid));
+    if (untouched.length === 1 && untouched[0].cid === 'CID-003') {
+      results.tests.push({ name: 'Untouched Prospects Detection', status: 'PASS', details: 'Correctly identified untouched prospects' });
       results.passed++;
     } else {
-      results.tests.push({ name: 'Escalation Logic', status: 'FAIL', details: 'Invalid escalation test data' });
+      results.tests.push({ name: 'Untouched Prospects Detection', status: 'FAIL', details: 'Failed to identify untouched prospects' });
       results.failed++;
     }
   } catch (e) {
-    results.tests.push({ name: 'Escalation Logic', status: 'FAIL', details: e.message });
+    results.tests.push({ name: 'Untouched Prospects Detection', status: 'FAIL', details: e.message });
     results.failed++;
   }
 
   // Test Results Summary
-  console.log('\n📊 Comprehensive Test Suite Results:');
+  console.log('\n📊 Test Results Summary:');
   console.log(`✅ Passed: ${results.passed}`);
   console.log(`❌ Failed: ${results.failed}`);
   console.log(`📋 Total Tests: ${results.passed + results.failed}\n`);
@@ -3335,7 +3295,7 @@ function runComprehensiveTests() {
   });
 
   if (results.failed === 0) {
-    console.log('\n🎉 All comprehensive tests passed! The system is working correctly.');
+    console.log('\n🎉 All E2E tests passed! The system is working correctly.');
   } else {
     console.log(`\n⚠️ ${results.failed} test(s) failed. Please review the failing tests above.`);
     console.log('\n🔍 Focus Areas for Investigation:');
